@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>fleshcheck — Office of Biological Verification</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23F6F7F4'/%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%231A1D1E' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='5' fill='none' stroke='%23E8590C' stroke-width='2.5'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="brand-block">
+          <span class="brand-mark">fleshcheck</span>
+          <span class="form-code" id="header-case-code">FORM OBV-01</span>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn btn-quiet" id="open-case-file">Case file</button>
+          <button type="button" class="btn btn-quiet" id="mute-toggle" aria-pressed="false">Audio: On</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-shell">
+      <div class="notice-banner notice-banner--challenge" id="challenge-banner" hidden></div>
+      <div class="notice-banner" id="replay-banner" hidden></div>
+
+      <section class="dossier-card" aria-labelledby="main-heading">
+        <p class="agency-kicker" id="department-kicker">OFFICE OF BIOLOGICAL VERIFICATION</p>
+        <h1 class="page-title" id="main-heading">Biological Compliance Check</h1>
+        <p class="briefing-line" id="challenge-prompt"></p>
+
+        <section class="panel" id="panel-intro">
+          <p class="privacy-hint" id="privacy-notice"></p>
+
+          <div class="captcha-box" id="captcha-widget">
+            <label class="captcha-label" for="verify-human">
+              <input
+                type="checkbox"
+                id="verify-human"
+                class="captcha-checkbox"
+                aria-describedby="privacy-notice"
+              />
+              <span>Verify you are human</span>
+            </label>
+            <div class="captcha-seal" aria-hidden="true">
+              <svg class="seal-svg" viewBox="0 0 32 32" fill="none">
+                <circle cx="16" cy="16" r="13" stroke="currentColor" stroke-width="2" />
+                <circle cx="16" cy="16" r="7" stroke="#E8590C" stroke-width="2" />
+                <path d="M16 3v5M16 24v5M3 16h5M24 16h5" stroke="currentColor" stroke-width="1.5" />
+              </svg>
+              <span>OBV<br />UNIT 01</span>
+            </div>
+          </div>
+
+          <div class="daily-meta-row" id="daily-meta-row">
+            <span id="meta-tries"></span>
+            <span id="meta-streak"></span>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-loading" hidden>
+          <div class="loading-box">
+            <div class="spinner-ring" aria-hidden="true"></div>
+            <p class="loading-status" id="loading-status">Initializing inspection booth.</p>
+            <progress class="loading-progress" aria-label="Preparing verification booth"></progress>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-stage" hidden>
+          <div class="stage-wrap">
+            <canvas
+              id="stage-canvas"
+              class="stage-canvas"
+              width="640"
+              height="480"
+              aria-label="Live compliance camera inspection view"
+            ></canvas>
+            <div class="stage-controls">
+              <p class="stage-prompt" id="stage-status-note">Stay inside the camera frame.</p>
+              <button type="button" class="btn btn-quiet" id="abort-round">Cancel inspection</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-noflesh" hidden>
+          <div class="noflesh-box">
+            <h2 class="noflesh-title" id="noflesh-title"></h2>
+            <p class="noflesh-body" id="noflesh-body"></p>
+            <p class="webview-note" id="webview-note" hidden></p>
+            <button type="button" class="btn btn-primary" id="retry-camera">Retry verification</button>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-verdict" hidden>
+          <div class="verdict-wrap">
+            <canvas
+              id="evidence-canvas"
+              class="evidence-preview"
+              width="1200"
+              height="675"
+              aria-label="Biometric compliance evidence card"
+            ></canvas>
+
+            <pre class="share-preview" id="share-text-value"></pre>
+
+            <div class="action-bar">
+              <button type="button" class="btn btn-accent" id="retry-try" hidden>Retry check</button>
+              <button type="button" class="btn btn-primary" id="download-png">Save evidence PNG</button>
+
+              <span class="copy">
+                <button
+                  type="button"
+                  class="btn copy-button"
+                  id="copy-share-btn"
+                  command="--copy"
+                  commandfor="share-text-value"
+                >
+                  Copy share line
+                </button>
+                <span class="tip" role="status"></span>
+              </span>
+
+              <a
+                class="btn"
+                id="post-x-link"
+                href="https://x.com/intent/tweet"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Post to X
+              </a>
+            </div>
+
+            <div class="link-field-row">
+              <label class="visually-hidden" for="challenge-link-value">Friend challenge link</label>
+              <input
+                id="challenge-link-value"
+                class="link-readonly"
+                type="text"
+                readonly
+                value=""
+              />
+              <span class="copy">
+                <button
+                  type="button"
+                  class="btn copy-button"
+                  id="copy-link-btn"
+                  command="--copy"
+                  commandfor="challenge-link-value"
+                >
+                  Copy challenge link
+                </button>
+                <span class="tip" role="status"></span>
+              </span>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="case-file-dialog" class="case-dialog" aria-labelledby="case-file-title">
+      <div class="dialog-inner">
+        <div class="dialog-head">
+          <div>
+            <h2 class="dialog-title" id="case-file-title">PERSONNEL CASE FILE</h2>
+            <div class="case-stats" id="case-file-stats"></div>
+          </div>
+          <button type="button" class="btn btn-quiet" id="close-case-file">Close</button>
+        </div>
+        <ul class="folder-grid" id="case-folder-grid" role="list"></ul>
+      </div>
+    </dialog>
+
+    <footer class="site-footer">
+      <span>All inspection runs locally via WebAssembly. Nothing is uploaded.</span>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

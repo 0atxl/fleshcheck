@@ -1,0 +1,252 @@
+import { mulberry32, shuffleWithRng } from "../prng";
+import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Point2D, Viewport } from "../types";
+
+const TARGET_DWELL_MS = 550;
+const TRAP_DWELL_MS = 320;
+
+interface CheckboxNode {
+  x: number;
+  y: number;
+  label: string;
+  trap: boolean;
+  orderIndex: number; // 0..N-1 for good boxes, -1 for traps
+  checked: boolean;
+  dwellMs: number;
+}
+
+/**
+ * Input Devices challenge: tick numbered checkboxes in order using your nose tip
+ * while avoiding trap clauses.
+ */
+export class NoseCursorChallenge implements Challenge<FaceSignal> {
+  private elapsedMs = 0;
+  private durationMs = 12_000;
+  private status: ChallengeResult["status"] = "running";
+  private callout: string | undefined;
+  private calloutPool: readonly string[] = ["TRAP CONSENT FILED"];
+  private seed = 1;
+
+  private boxes: CheckboxNode[] = [];
+  private cursor: Point2D = { x: 320, y: 240 };
+  private nextOrder = 0;
+  private targetCount = 3;
+  private hitRadius = 42;
+
+  init(ctx: ChallengeContext): void {
+    this.elapsedMs = 0;
+    this.durationMs = Math.max(1_000, ctx.durationMs);
+    this.status = "running";
+    this.callout = undefined;
+    this.seed = ctx.seed;
+    this.nextOrder = 0;
+    this.cursor = { ...ctx.baseline.nose };
+
+    if (ctx.copy.callouts.length > 0) {
+      this.calloutPool = ctx.copy.callouts;
+    }
+
+    const rng = mulberry32(ctx.seed);
+    const items = ctx.copy.checkboxes ?? [];
+    const goodPool = shuffleWithRng(items.filter((i) => !i.trap), rng);
+    const trapPool = shuffleWithRng(items.filter((i) => i.trap), rng);
+
+    this.targetCount = this.durationMs <= 5_000 ? 2 : 3;
+    const trapCount = this.durationMs <= 5_000 ? 1 : 2;
+    this.hitRadius = Math.max(36, Math.min(ctx.viewport.width, ctx.viewport.height) * 0.085);
+
+    const w = ctx.viewport.width;
+    const h = ctx.viewport.height;
+    const slots: Point2D[] = shuffleWithRng(
+      [
+        { x: w * 0.28, y: h * 0.28 },
+        { x: w * 0.72, y: h * 0.28 },
+        { x: w * 0.5, y: h * 0.48 },
+        { x: w * 0.28, y: h * 0.68 },
+        { x: w * 0.72, y: h * 0.68 },
+      ],
+      rng,
+    );
+
+    const nodes: CheckboxNode[] = [];
+    for (let i = 0; i < this.targetCount; i++) {
+      const slot = slots[i]!;
+      nodes.push({
+        x: slot.x,
+        y: slot.y,
+        label: goodPool[i]?.label ?? `Confirm box ${i + 1}`,
+        trap: false,
+        orderIndex: i,
+        checked: false,
+        dwellMs: 0,
+      });
+    }
+    for (let j = 0; j < trapCount; j++) {
+      const slot = slots[this.targetCount + j]!;
+      nodes.push({
+        x: slot.x,
+        y: slot.y,
+        label: trapPool[j]?.label ?? "I agree to be replaced",
+        trap: true,
+        orderIndex: -1,
+        checked: false,
+        dwellMs: 0,
+      });
+    }
+
+    this.boxes = nodes;
+  }
+
+  getActiveTarget(): Point2D | null {
+    const active = this.boxes.find((b) => !b.trap && b.orderIndex === this.nextOrder);
+    return active ? { x: active.x, y: active.y } : null;
+  }
+
+  getTrapTarget(): Point2D | null {
+    const trap = this.boxes.find((b) => b.trap);
+    return trap ? { x: trap.x, y: trap.y } : null;
+  }
+
+  update(dtMs: number, signal: FaceSignal): void {
+    if (this.status !== "running" || !signal.tracked) return;
+
+    const clampedDt = Math.min(80, Math.max(1, dtMs));
+    this.elapsedMs += clampedDt;
+    this.cursor = { ...signal.nose };
+
+    for (const box of this.boxes) {
+      if (box.checked) continue;
+
+      const dist = Math.hypot(this.cursor.x - box.x, this.cursor.y - box.y);
+      const isHovering = dist <= this.hitRadius;
+
+      if (box.trap) {
+        if (isHovering) {
+          box.dwellMs += clampedDt;
+          if (box.dwellMs >= TRAP_DWELL_MS) {
+            box.checked = true;
+            this.status = "failed";
+            const rng = mulberry32(this.seed ^ Math.round(this.elapsedMs));
+            this.callout =
+              this.calloutPool[Math.floor(rng() * this.calloutPool.length)] ?? "TRAP CONSENT FILED";
+            return;
+          }
+        } else {
+          box.dwellMs = Math.max(0, box.dwellMs - clampedDt * 2);
+        }
+      } else if (box.orderIndex === this.nextOrder) {
+        if (isHovering) {
+          box.dwellMs += clampedDt;
+          if (box.dwellMs >= TARGET_DWELL_MS) {
+            box.checked = true;
+            this.nextOrder += 1;
+            if (this.nextOrder >= this.targetCount) {
+              this.status = "passed";
+              return;
+            }
+          }
+        } else {
+          box.dwellMs = Math.max(0, box.dwellMs - clampedDt * 1.5);
+        }
+      }
+    }
+
+    if (this.elapsedMs >= this.durationMs) {
+      this.elapsedMs = this.durationMs;
+      this.status = "failed";
+      this.callout = "INPUT DEVICE TIMEOUT";
+    }
+  }
+
+  draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+    const progress = Math.min(1, this.elapsedMs / this.durationMs);
+    ctx.save();
+
+    // Draw checkboxes
+    for (const box of this.boxes) {
+      const isNext = !box.trap && box.orderIndex === this.nextOrder;
+      const boxSize = 26;
+      const half = boxSize / 2;
+
+      ctx.fillStyle = box.checked
+        ? box.trap
+          ? "#C92A2A"
+          : "#2B8A3E"
+        : "rgba(246, 247, 244, 0.92)";
+      ctx.fillRect(box.x - half, box.y - half, boxSize, boxSize);
+
+      ctx.strokeStyle = isNext ? "#E8590C" : "#1A1D1E";
+      ctx.lineWidth = isNext ? 3 : 2;
+      ctx.strokeRect(box.x - half, box.y - half, boxSize, boxSize);
+
+      // Dwell progress arc around box
+      if (box.dwellMs > 0 && !box.checked) {
+        const thresh = box.trap ? TRAP_DWELL_MS : TARGET_DWELL_MS;
+        const frac = Math.min(1, box.dwellMs / thresh);
+        ctx.strokeStyle = box.trap ? "#C92A2A" : "#2B8A3E";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(box.x, box.y, 21, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+        ctx.stroke();
+      }
+
+      // Checkmark or step number
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      if (box.checked) {
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "800 15px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillText(box.trap ? "X" : "OK", box.x, box.y + 1);
+      } else if (!box.trap) {
+        ctx.fillStyle = isNext ? "#E8590C" : "#1A1D1E";
+        ctx.font = "800 13px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillText(String(box.orderIndex + 1), box.x, box.y + 1);
+      }
+
+      // Label tag under box
+      ctx.font = "600 11px system-ui, -apple-system, sans-serif";
+      const labelW = Math.min(190, ctx.measureText(box.label).width + 14);
+      ctx.fillStyle = "rgba(26, 29, 30, 0.86)";
+      ctx.fillRect(box.x - labelW / 2, box.y + 19, labelW, 20);
+      ctx.fillStyle = isNext ? "#FFD8A8" : "#F6F7F4";
+      ctx.fillText(box.label, box.x, box.y + 29, labelW - 8);
+    }
+
+    // Nose cursor crosshair
+    ctx.strokeStyle = "#E8590C";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(this.cursor.x, this.cursor.y, 12, 0, Math.PI * 2);
+    ctx.moveTo(this.cursor.x - 18, this.cursor.y);
+    ctx.lineTo(this.cursor.x + 18, this.cursor.y);
+    ctx.moveTo(this.cursor.x, this.cursor.y - 18);
+    ctx.lineTo(this.cursor.x, this.cursor.y + 18);
+    ctx.stroke();
+
+    // Top HUD
+    ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
+    ctx.fillRect(0, 0, vp.width, 44);
+    ctx.fillStyle = this.status === "failed" ? "#C92A2A" : "#E8590C";
+    ctx.fillRect(0, 40, vp.width * progress, 4);
+
+    ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = "#F6F7F4";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillText(`FORM 19-A · INPUT DEVICES (${this.nextOrder}/${this.targetCount})`, 16, 20);
+
+    const remaining = Math.max(0, (this.durationMs - this.elapsedMs) / 1000).toFixed(1);
+    ctx.textAlign = "right";
+    ctx.fillText(`${remaining}s`, vp.width - 16, 20);
+
+    ctx.restore();
+  }
+
+  getResult(): ChallengeResult {
+    const progress =
+      this.status === "passed" ? 1 : Math.min(0.99, this.nextOrder / Math.max(1, this.targetCount));
+    if (this.callout !== undefined) {
+      return { status: this.status, progress, callout: this.callout };
+    }
+    return { status: this.status, progress };
+  }
+}
