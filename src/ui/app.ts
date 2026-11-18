@@ -10,6 +10,7 @@ import type { ChallengeManifest, TryRecord } from "../game/types";
 import { initCopyHandlers } from "../lib/copy";
 import { canvasToPngBlob, downloadBlob } from "../lib/export-png";
 import { ComplianceSfx } from "../lib/sfx";
+import { RoundClipRecorder, type RecordedClip } from "../output/clip";
 import { renderEvidenceCard } from "../output/evidence-card";
 import { buildChallengeLink, buildXIntentUrl } from "../output/share";
 import { requestCamera, stopCamera } from "../vision/camera";
@@ -74,6 +75,7 @@ export function bootApp(): void {
   const shareTextEl = mustGet<HTMLElement>("share-text-value");
   const challengeLinkInput = mustGet<HTMLInputElement>("challenge-link-value");
   const downloadPngBtn = mustGet<HTMLButtonElement>("download-png");
+  const downloadClipBtn = mustGet<HTMLButtonElement>("download-clip");
   const postXLink = mustGet<HTMLAnchorElement>("post-x-link");
   const retryTryBtn = mustGet<HTMLButtonElement>("retry-try");
 
@@ -110,8 +112,11 @@ export function bootApp(): void {
 
   // Runtime state
   let sandboxTries: TryRecord[] = [];
+  let sandboxDisplaySquares: TryRecord[] | null = null;
   let bestVerdict: Omit<LoopVerdict, "snapshot"> | null = null;
   let bestSnapshotCanvas: HTMLCanvasElement | null = null;
+  let bestClip: RecordedClip | null = null;
+  const clipRecorder = new RoundClipRecorder();
   let landmarkerPromise: Promise<FaceLandmarker> | null = null;
   let activeLoop: GameLoop | null = null;
   let activeStream: MediaStream | null = null;
@@ -131,18 +136,32 @@ export function bootApp(): void {
     muteToggle.textContent = muted ? "Audio: Off" : "Audio: On";
   }
 
+  function maxTriesForManifest(): number {
+    return manifest.maxTries ?? MAX_TRIES_PER_DAY;
+  }
+
   function currentTries(): TryRecord[] {
     return isReplay || isDevSandbox ? sandboxTries : store.getTodayTries(activeDay);
   }
 
+  function currentDisplaySquares(): TryRecord[] {
+    if (isReplay || isDevSandbox) {
+      return sandboxDisplaySquares ?? sandboxTries;
+    }
+    return store.getTodayDisplaySquares(activeDay);
+  }
+
   function updateIntroMeta(): void {
     const tries = currentTries();
-    const squares = tries.map(formatTrySquare).join("");
+    const maxTries = maxTriesForManifest();
+    const squares = currentDisplaySquares().map(formatTrySquare).join("");
     metaTries.textContent = isDevSandbox
       ? `Dev sandbox tries: ${squares || "None yet"}`
       : isReplay
         ? `Replay tries: ${squares || "None yet"}`
-        : `Today's tries: ${tries.length}/${MAX_TRIES_PER_DAY}${squares ? ` (${squares})` : ""}`;
+        : maxTries === 1
+          ? `Annual audit: 1 attempt${squares ? ` (${squares})` : ""}`
+          : `Today's tries: ${tries.length}/${maxTries}${squares ? ` (${squares})` : ""}`;
     metaStreak.textContent = `Streak: ${store.getData().streak}`;
   }
 
@@ -197,6 +216,7 @@ export function bootApp(): void {
       window.clearInterval(stallTimer);
       stallTimer = 0;
     }
+    clipRecorder.abort();
     if (activeLoop) {
       activeLoop.stop();
       activeLoop.releaseSnapshot();
@@ -286,29 +306,48 @@ export function bootApp(): void {
             stageStatusNote.textContent = "Subject lost. Return to frame.";
           }
         },
+        onRoundActive(canvas) {
+          clipRecorder.start(canvas);
+        },
         onVerdict(verdict) {
-          handleVerdict(verdict);
+          void handleVerdict(verdict);
         },
         playAlertBeep: () => sfx.playAlertBeep(),
         playStampThud: () => sfx.playStampThud(),
         playPassChime: () => sfx.playPassChime(),
+        playRoundAdvance: () => sfx.playRoundAdvance(),
       },
       reducedMotion,
     );
     activeLoop.start();
   }
 
-  function handleVerdict(verdict: LoopVerdict): void {
+  async function handleVerdict(verdict: LoopVerdict): Promise<void> {
+    const clipPromise = clipRecorder.stop();
+
     const record: TryRecord = {
       passed: verdict.passed,
       pct: verdict.pct,
       paused: verdict.paused,
     };
 
+    const roundSquares =
+      verdict.roundRecords && verdict.roundRecords.length > 0 ? verdict.roundRecords : undefined;
+
     if (isReplay || isDevSandbox) {
       sandboxTries = [...sandboxTries, record];
+      if (roundSquares) {
+        sandboxDisplaySquares = roundSquares;
+      }
     } else {
-      store.recordVerdict(manifest.id, activeDay, record, false);
+      store.recordVerdict(
+        manifest.id,
+        activeDay,
+        record,
+        false,
+        maxTriesForManifest(),
+        roundSquares,
+      );
     }
 
     const shouldReplaceBest =
@@ -325,6 +364,7 @@ export function bootApp(): void {
         elapsedMs: verdict.elapsedMs,
         durationMs: verdict.durationMs,
         landmarks: verdict.landmarks,
+        ...(roundSquares ? { roundRecords: roundSquares } : {}),
       };
       if (!bestSnapshotCanvas) {
         bestSnapshotCanvas = document.createElement("canvas");
@@ -334,15 +374,40 @@ export function bootApp(): void {
       bestSnapshotCanvas.getContext("2d")?.drawImage(verdict.snapshot, 0, 0);
     }
 
-    cleanupSession();
+    // Stop active loop & camera immediately after grabbing clipPromise
+    if (activeLoop) {
+      activeLoop.stop();
+      activeLoop.releaseSnapshot();
+      activeLoop = null;
+    }
+    stopCamera(activeStream, activeVideo);
+    activeStream = null;
+    activeVideo = null;
     checkbox.checked = false;
     checkbox.disabled = false;
 
     showVerdictPanel();
+
+    const clip = await clipPromise;
+    if (clip && shouldReplaceBest) {
+      bestClip = clip;
+      updateClipButtonUi();
+    }
+  }
+
+  function updateClipButtonUi(): void {
+    if (!bestClip) {
+      downloadClipBtn.hidden = true;
+      return;
+    }
+    const labelPrefix = bestVerdict?.passed ? "Save round clip" : "Save fail clip";
+    downloadClipBtn.textContent = `${labelPrefix} (.${bestClip.ext})`;
+    downloadClipBtn.hidden = false;
   }
 
   function showVerdictPanel(): void {
     const tries = currentTries();
+    const displaySquares = currentDisplaySquares();
     const bestStored = isReplay || isDevSandbox ? bestVerdict : store.getBestTodayTry(activeDay);
     const bestPct = bestVerdict?.pct ?? bestStored?.pct ?? 0;
     const bestPassed = bestVerdict?.passed ?? bestStored?.passed ?? false;
@@ -356,7 +421,7 @@ export function bootApp(): void {
       pct: bestPct,
       passed: bestPassed,
       callout,
-      tries,
+      tries: displaySquares,
       elapsedMs: bestVerdict?.elapsedMs ?? (bestPassed ? manifest.durationMs : Math.round((bestPct / 100) * manifest.durationMs)),
       durationMs: manifest.durationMs,
       seed,
@@ -367,7 +432,7 @@ export function bootApp(): void {
     const shareText = formatShareLine({
       dayNumber: activeDay,
       title: manifest.title,
-      tries,
+      tries: displaySquares,
       bestPct,
       isReplay,
     });
@@ -376,9 +441,13 @@ export function bootApp(): void {
     postXLink.href = buildXIntentUrl(shareText);
     challengeLinkInput.value = buildChallengeLink(activeDay, bestPct);
 
+    const maxTries = maxTriesForManifest();
     const canRetry =
-      isReplay || isDevSandbox || (!store.isTodayFinished(activeDay) && tries.length < MAX_TRIES_PER_DAY);
+      isReplay ||
+      isDevSandbox ||
+      (!store.isTodayFinished(activeDay, maxTries) && tries.length < maxTries);
     retryTryBtn.hidden = !canRetry;
+    updateClipButtonUi();
 
     updateIntroMeta();
     void switchPanel(panelVerdict);
@@ -422,6 +491,11 @@ export function bootApp(): void {
     }
   });
 
+  downloadClipBtn.addEventListener("click", () => {
+    if (!bestClip) return;
+    downloadBlob(bestClip.blob, `fleshcheck-${dayStr}.${bestClip.ext}`);
+  });
+
   muteToggle.addEventListener("click", () => {
     sfx.setMuted(!sfx.isMuted());
     updateMuteUi();
@@ -448,6 +522,7 @@ export function bootApp(): void {
 
   window.addEventListener("pagehide", () => {
     cleanupSession();
+    sfx.close();
   });
 
   updateMuteUi();
@@ -462,7 +537,10 @@ export function bootApp(): void {
       seed = dailyPick.seed ^ nextManifest.id.length;
       isDevSandbox = true;
       sandboxTries = [];
+      sandboxDisplaySquares = null;
       bestVerdict = null;
+      bestClip = null;
+      updateClipButtonUi();
       if (bestSnapshotCanvas) {
         bestSnapshotCanvas.width = 0;
         bestSnapshotCanvas.height = 0;
@@ -479,7 +557,7 @@ export function bootApp(): void {
   }
 
   // Returning player who already finished today lands straight on their daily record
-  if (!isReplay && !isDevSandbox && store.isTodayFinished(activeDay)) {
+  if (!isReplay && !isDevSandbox && store.isTodayFinished(activeDay, maxTriesForManifest())) {
     showVerdictPanel();
   }
 }

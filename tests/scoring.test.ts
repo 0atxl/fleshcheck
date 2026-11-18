@@ -79,4 +79,25 @@ describe("scoring and case-file persistence", () => {
     memStore.recordVerdict("POKER_FACE", 5, { passed: false, pct: 40, paused: false }, false);
     expect(memStore.getTodayTries(5)).toHaveLength(1);
   });
+
+  it("supports single-attempt FULL_AUDIT lock and persisted displaySquares across reloads", () => {
+    const backing = new Map<string, string>();
+    const storage: StorageLike = {
+      getItem: (k) => backing.get(k) ?? null,
+      setItem: (k, v) => backing.set(k, v),
+    };
+
+    const store = new CaseFileStore(storage);
+    const roundSquares = [
+      { passed: false, pct: 35, paused: false },
+      { passed: true, pct: 100, paused: false },
+      { passed: false, pct: 60, paused: false },
+    ];
+    store.recordVerdict("FULL_AUDIT", 9, { passed: false, pct: 65, paused: false }, false, 1, roundSquares);
+    expect(store.isTodayFinished(9, 1)).toBe(true);
+
+    const reloaded = new CaseFileStore(storage);
+    expect(reloaded.isTodayFinished(9, 1)).toBe(true);
+    expect(reloaded.getTodayDisplaySquares(9)).toEqual(roundSquares);
+  });
 });

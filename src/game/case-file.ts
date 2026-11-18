@@ -14,6 +14,7 @@ export interface CaseFileData {
   today: {
     day: number;
     tries: TryRecord[];
+    displaySquares?: TryRecord[];
   };
   departments: Partial<Record<ChallengeId, DepartmentStats>>;
 }
@@ -70,6 +71,9 @@ export class CaseFileStore {
         today: {
           day: typeof parsed.today?.day === "number" ? parsed.today.day : 0,
           tries: Array.isArray(parsed.today?.tries) ? parsed.today.tries.slice(0, MAX_TRIES_PER_DAY) : [],
+          ...(Array.isArray(parsed.today?.displaySquares)
+            ? { displaySquares: parsed.today.displaySquares.slice(0, MAX_TRIES_PER_DAY) }
+            : {}),
         },
         departments: parsed.departments && typeof parsed.departments === "object"
           ? { ...parsed.departments }
@@ -101,10 +105,18 @@ export class CaseFileStore {
     return [...this.memoryState.today.tries];
   }
 
-  isTodayFinished(dayNumber: number): boolean {
+  getTodayDisplaySquares(dayNumber: number): TryRecord[] {
+    if (this.memoryState.today.day !== dayNumber) {
+      return [];
+    }
+    const override = this.memoryState.today.displaySquares;
+    return override && override.length > 0 ? [...override] : [...this.memoryState.today.tries];
+  }
+
+  isTodayFinished(dayNumber: number, maxTries = MAX_TRIES_PER_DAY): boolean {
     const tries = this.getTodayTries(dayNumber);
     if (tries.length === 0) return false;
-    return tries.some((t) => t.passed) || tries.length >= MAX_TRIES_PER_DAY;
+    return tries.some((t) => t.passed) || tries.length >= maxTries;
   }
 
   getBestTodayTry(dayNumber: number): TryRecord | null {
@@ -146,6 +158,8 @@ export class CaseFileStore {
     dayNumber: number,
     record: TryRecord,
     isReplay: boolean,
+    maxTries = MAX_TRIES_PER_DAY,
+    displaySquares?: readonly TryRecord[],
   ): void {
     const next: CaseFileData = {
       streak: this.memoryState.streak,
@@ -153,6 +167,9 @@ export class CaseFileStore {
       today: {
         day: this.memoryState.today.day,
         tries: [...this.memoryState.today.tries],
+        ...(this.memoryState.today.displaySquares
+          ? { displaySquares: [...this.memoryState.today.displaySquares] }
+          : {}),
       },
       departments: { ...this.memoryState.departments },
     };
@@ -166,10 +183,13 @@ export class CaseFileStore {
 
     if (!isReplay) {
       const existingTries = next.today.day === dayNumber ? next.today.tries : [];
-      if (existingTries.length < MAX_TRIES_PER_DAY && !existingTries.some((t) => t.passed)) {
+      if (existingTries.length < maxTries && !existingTries.some((t) => t.passed)) {
         next.today = {
           day: dayNumber,
           tries: [...existingTries, record],
+          ...(displaySquares && displaySquares.length > 0
+            ? { displaySquares: [...displaySquares] }
+            : {}),
         };
       }
 

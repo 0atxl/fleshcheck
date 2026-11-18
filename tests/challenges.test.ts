@@ -2,20 +2,24 @@ import { describe, expect, it } from "vitest";
 import { AFFECT_DEMO_COPY } from "../src/copy/affect-demo";
 import { BOT_DODGE_COPY } from "../src/copy/bot-dodge";
 import { EYES_ON_FORM_COPY } from "../src/copy/eyes-on-form";
+import { FULL_AUDIT_COPY } from "../src/copy/full-audit";
 import { INTERVIEW_COPY } from "../src/copy/interview";
 import { MOUTH_CATCH_COPY } from "../src/copy/mouth-catch";
 import { NOSE_CURSOR_COPY } from "../src/copy/nose-cursor";
 import { NOSE_SPOON_COPY } from "../src/copy/nose-spoon";
 import { PASSPORT_PHOTO_COPY } from "../src/copy/passport-photo";
+import { POKER_FACE_COPY } from "../src/copy/poker-face";
 import { AffectDemoChallenge, matchesAffectPrompt } from "../src/game/challenges/affect-demo";
 import { BotDodgeChallenge, computeStampOverlapRatio } from "../src/game/challenges/bot-dodge";
 import { EyesOnFormChallenge } from "../src/game/challenges/eyes-on-form";
+import { FullAuditChallenge } from "../src/game/challenges/full-audit";
 import { InterviewChallenge } from "../src/game/challenges/interview";
 import { MouthCatchChallenge } from "../src/game/challenges/mouth-catch";
 import { NoseCursorChallenge } from "../src/game/challenges/nose-cursor";
 import { computeEyeRollRad, MAX_SPOON_ANGLE_RAD, NoseSpoonChallenge } from "../src/game/challenges/nose-spoon";
 import { PassportPhotoChallenge } from "../src/game/challenges/passport-photo";
-import type { Baseline, FaceSignal } from "../src/game/types";
+import { PokerFaceChallenge } from "../src/game/challenges/poker-face";
+import type { Baseline, ChallengeManifest, FaceSignal } from "../src/game/types";
 import { computeBlendshapeDeltas } from "../src/vision/calibration";
 
 function baseBaseline(): Baseline {
@@ -325,5 +329,77 @@ describe("Phase 3 challenges", () => {
       if (eyes.getResult().status === "failed") break;
     }
     expect(eyes.getResult().status).toBe("failed");
+  });
+});
+
+describe("Phase 4 FULL_AUDIT challenge", () => {
+  it("picks 3 distinct face challenges and runs all 3 rounds even when Round 1 fails", () => {
+    const baseline = baseBaseline();
+    const candidates: ChallengeManifest[] = [
+      {
+        id: "POKER_FACE",
+        title: "Poker Face",
+        department: "Affect Review",
+        prompt: "Hold neutral.",
+        model: "face",
+        durationMs: 12_000,
+        enabled: true,
+        copy: POKER_FACE_COPY,
+        create: () => new PokerFaceChallenge(),
+      },
+      {
+        id: "PASSPORT_PHOTO",
+        title: "Passport Photo",
+        department: "Identity Imaging",
+        prompt: "Hold still.",
+        model: "face",
+        durationMs: 12_000,
+        enabled: true,
+        copy: PASSPORT_PHOTO_COPY,
+        create: () => new PassportPhotoChallenge(),
+      },
+      {
+        id: "EYES_ON_FORM",
+        title: "Eyes on Form",
+        department: "Attention Audit",
+        prompt: "Look forward.",
+        model: "face",
+        durationMs: 12_000,
+        enabled: true,
+        copy: EYES_ON_FORM_COPY,
+        create: () => new EyesOnFormChallenge(),
+      },
+    ];
+
+    const audit = new FullAuditChallenge(() => candidates);
+    audit.init({
+      seed: 100,
+      baseline,
+      copy: FULL_AUDIT_COPY,
+      viewport: { width: 640, height: 480 },
+      durationMs: 12_000,
+    });
+
+    const pickedIds = new Set(audit.getSubManifests().map((m) => m.id));
+    expect(pickedIds.size).toBe(3);
+
+    // Smile hard during Round 1 to fail Round 1, then hold neutral for Rounds 2 & 3
+    for (let step = 0; step < 320; step++) {
+      const roundsDone = audit.getResult().roundRecords?.length ?? 0;
+      const smile = roundsDone === 0 ? 0.7 : 0.05;
+      audit.update(
+        50,
+        makeFaceSignal({ shapes: { ...baseline.shapes, mouthSmileLeft: smile, mouthSmileRight: smile } }, baseline),
+      );
+      if (audit.getResult().status !== "running") break;
+    }
+
+    const res = audit.getResult();
+    expect(res.status).toBe("failed");
+    expect(res.roundRecords).toHaveLength(3);
+    expect(res.roundRecords?.[0]?.passed).toBe(false);
+    expect(res.roundRecords?.[1]?.passed).toBe(true);
+    expect(res.roundRecords?.[2]?.passed).toBe(true);
+    expect(res.progress).toBeLessThan(1);
   });
 });

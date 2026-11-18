@@ -71,6 +71,18 @@ export class ComplianceSfx {
     window.setTimeout(() => this.tone(659.25, 0.14, "sine", 0.07), 90);
   }
 
+  playRoundAdvance(): void {
+    this.tone(440, 0.06, "sine", 0.05);
+    window.setTimeout(() => this.tone(554.37, 0.08, "sine", 0.05), 65);
+  }
+
+  close(): void {
+    if (this.ctx) {
+      this.ctx.close().catch(() => {});
+      this.ctx = null;
+    }
+  }
+
   private ensureContext(): AudioContext | null {
     if (this.muted || typeof window === "undefined") return null;
     if (!this.ctx) this.unlock();

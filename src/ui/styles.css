@@ -353,6 +353,14 @@ body {
   .stage-canvas {
     aspect-ratio: 3 / 4;
   }
+
+  .dossier-card {
+    padding: 1rem;
+  }
+
+  .action-bar .btn {
+    flex: 1 1 auto;
+  }
 }
 
 .stage-controls {

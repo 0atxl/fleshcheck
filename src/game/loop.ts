@@ -4,7 +4,7 @@ import { coverRect } from "../vision/geometry";
 import type { FaceTracker } from "../vision/tracker";
 import { drawFaceWireframe } from "../vision/wireframe";
 import { computeHumanPct } from "./scoring";
-import type { Baseline, Challenge, ChallengeManifest, Point2D, Viewport } from "./types";
+import type { Baseline, Challenge, ChallengeManifest, Point2D, TryRecord, Viewport } from "./types";
 
 export type GamePhase =
   | "IDLE"
@@ -23,15 +23,18 @@ export interface LoopVerdict {
   durationMs: number;
   snapshot: HTMLCanvasElement;
   landmarks: Point2D[];
+  roundRecords?: TryRecord[];
 }
 
 export interface LoopCallbacks {
   onPhaseChange(phase: GamePhase): void;
+  onRoundActive?(canvas: HTMLCanvasElement): void;
   onPauseUsed?(count: number): void;
   onVerdict(verdict: LoopVerdict): void;
   playAlertBeep?(): void;
   playStampThud?(): void;
   playPassChime?(): void;
+  playRoundAdvance?(): void;
 }
 
 /**
@@ -49,6 +52,9 @@ export class GameLoop {
   private calibration = new CalibrationCollector(CALIBRATION_MS);
   private shakeRemainingMs = 0;
   private readonly snapshotCanvas: HTMLCanvasElement;
+  private readonly firstSubFailCanvas: HTMLCanvasElement;
+  private hasSubFailSnapshot = false;
+  private seenSubRounds = 0;
   private latestLandmarks: Point2D[] = [];
 
   constructor(
@@ -61,6 +67,7 @@ export class GameLoop {
     private readonly reducedMotion = false,
   ) {
     this.snapshotCanvas = document.createElement("canvas");
+    this.firstSubFailCanvas = document.createElement("canvas");
   }
 
   start(): void {
@@ -71,6 +78,8 @@ export class GameLoop {
     this.latestLandmarks = [];
     this.challenge = null;
     this.baseline = null;
+    this.hasSubFailSnapshot = false;
+    this.seenSubRounds = 0;
     this.calibration = new CalibrationCollector(CALIBRATION_MS);
     this.tracker.resetLoss();
     this.setPhase("CALIBRATING");
@@ -88,6 +97,8 @@ export class GameLoop {
   releaseSnapshot(): void {
     this.snapshotCanvas.width = 0;
     this.snapshotCanvas.height = 0;
+    this.firstSubFailCanvas.width = 0;
+    this.firstSubFailCanvas.height = 0;
   }
 
   private setPhase(next: GamePhase): void {
@@ -154,6 +165,7 @@ export class GameLoop {
           durationMs: this.manifest.durationMs,
         });
         this.setPhase("ACTIVE");
+        this.callbacks.onRoundActive?.(this.canvas);
       }
     } else if (this.phase === "ACTIVE" || this.phase === "PAUSED") {
       if (frame.faceLost) {
@@ -180,6 +192,22 @@ export class GameLoop {
           this.challenge.draw(ctx, vp);
 
           const res = this.challenge.getResult();
+          if (res.roundRecords && res.roundRecords.length > this.seenSubRounds) {
+            const latestRound = res.roundRecords[res.roundRecords.length - 1];
+            this.seenSubRounds = res.roundRecords.length;
+            if (latestRound && !latestRound.passed) {
+              if (!this.hasSubFailSnapshot) {
+                this.firstSubFailCanvas.width = vp.width;
+                this.firstSubFailCanvas.height = vp.height;
+                this.firstSubFailCanvas.getContext("2d")?.drawImage(this.canvas, 0, 0);
+                this.hasSubFailSnapshot = true;
+              }
+              this.callbacks.playStampThud?.();
+            } else {
+              this.callbacks.playRoundAdvance?.();
+            }
+          }
+
           if (res.status === "failed" || res.status === "passed") {
             this.finishVerdict(
               ctx,
@@ -214,7 +242,11 @@ export class GameLoop {
     this.snapshotCanvas.height = vp.height;
     const snapCtx = this.snapshotCanvas.getContext("2d");
     if (snapCtx) {
-      snapCtx.drawImage(this.canvas, 0, 0);
+      if (this.hasSubFailSnapshot && this.firstSubFailCanvas.width > 0) {
+        snapCtx.drawImage(this.firstSubFailCanvas, 0, 0);
+      } else {
+        snapCtx.drawImage(this.canvas, 0, 0);
+      }
     }
 
     if (!passed) {
@@ -240,6 +272,7 @@ export class GameLoop {
       durationMs: this.manifest.durationMs,
       snapshot: this.snapshotCanvas,
       landmarks: this.latestLandmarks,
+      ...(res.roundRecords ? { roundRecords: res.roundRecords } : {}),
     });
   }
 

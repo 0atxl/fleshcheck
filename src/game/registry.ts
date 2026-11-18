@@ -2,6 +2,7 @@ import { DEFAULT_DURATION_MS } from "../config";
 import { AFFECT_DEMO_COPY } from "../copy/affect-demo";
 import { BOT_DODGE_COPY } from "../copy/bot-dodge";
 import { EYES_ON_FORM_COPY } from "../copy/eyes-on-form";
+import { FULL_AUDIT_COPY } from "../copy/full-audit";
 import { INTERVIEW_COPY } from "../copy/interview";
 import { MOUTH_CATCH_COPY } from "../copy/mouth-catch";
 import { NOSE_CURSOR_COPY } from "../copy/nose-cursor";
@@ -11,6 +12,7 @@ import { POKER_FACE_COPY } from "../copy/poker-face";
 import { AffectDemoChallenge } from "./challenges/affect-demo";
 import { BotDodgeChallenge } from "./challenges/bot-dodge";
 import { EyesOnFormChallenge } from "./challenges/eyes-on-form";
+import { FullAuditChallenge } from "./challenges/full-audit";
 import { InterviewChallenge } from "./challenges/interview";
 import { MouthCatchChallenge } from "./challenges/mouth-catch";
 import { NoseCursorChallenge } from "./challenges/nose-cursor";
@@ -118,6 +120,18 @@ export const CHALLENGES: ChallengeManifest[] = [
     enabled: true,
     copy: EYES_ON_FORM_COPY,
     create: () => new EyesOnFormChallenge(),
+  },
+  {
+    id: "FULL_AUDIT",
+    title: "Full Audit",
+    department: "Annual Audit",
+    prompt: "Annual audit. Three rounds. No appeals.",
+    model: "face",
+    durationMs: DEFAULT_DURATION_MS,
+    maxTries: 1,
+    enabled: true,
+    copy: FULL_AUDIT_COPY,
+    create: () => new FullAuditChallenge(() => CHALLENGES),
   },
 ];
 

@@ -69,10 +69,17 @@ export interface FaceSignal {
   landmarks: Point2D[];
 }
 
+export interface TryRecord {
+  passed: boolean;
+  pct: number;
+  paused: boolean;
+}
+
 export interface ChallengeResult {
   status: "running" | "failed" | "passed";
   progress: number;
   callout?: string;
+  roundRecords?: TryRecord[];
 }
 
 export interface ChallengeContext {
@@ -97,13 +104,8 @@ export interface ChallengeManifest {
   prompt: string;
   model: "face" | "hands";
   durationMs: number;
+  maxTries?: number;
   enabled: boolean;
   copy: CopyBank;
   create: () => Challenge;
-}
-
-export interface TryRecord {
-  passed: boolean;
-  pct: number;
-  paused: boolean;
 }

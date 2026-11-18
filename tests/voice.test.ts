@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AFFECT_DEMO_COPY } from "../src/copy/affect-demo";
 import { BOT_DODGE_COPY } from "../src/copy/bot-dodge";
 import { EYES_ON_FORM_COPY } from "../src/copy/eyes-on-form";
+import { FULL_AUDIT_COPY } from "../src/copy/full-audit";
 import { STALLING_LINES, STAMPS_PASS, STAMPS_REJECT, UI_COPY } from "../src/copy/global";
 import { INTERVIEW_COPY } from "../src/copy/interview";
 import { MOUTH_CATCH_COPY } from "../src/copy/mouth-catch";
@@ -45,6 +46,8 @@ function gatherAllStrings(): string[] {
     ...NOSE_CURSOR_COPY.callouts,
     ...(EYES_ON_FORM_COPY.popups ?? []),
     ...EYES_ON_FORM_COPY.callouts,
+    ...(FULL_AUDIT_COPY.transitions ?? []),
+    ...FULL_AUDIT_COPY.callouts,
   ];
 
   for (const c of CHALLENGES) {

@@ -52,6 +52,10 @@ describe("challenge registry", () => {
       } else if (c.id === "EYES_ON_FORM") {
         expect(c.copy.popups?.length ?? 0).toBeGreaterThanOrEqual(25);
         expect(c.copy.callouts.length).toBeGreaterThanOrEqual(8);
+      } else if (c.id === "FULL_AUDIT") {
+        expect(c.copy.transitions?.length ?? 0).toBeGreaterThanOrEqual(5);
+        expect(c.copy.callouts.length).toBeGreaterThanOrEqual(10);
+        expect(c.maxTries).toBe(1);
       }
     }
   });
