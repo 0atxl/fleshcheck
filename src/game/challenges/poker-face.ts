@@ -1,4 +1,4 @@
-import { POKER_FACE_NOTES } from "../../copy/poker-face";
+import { POKER_FACE_CALM_CALLOUTS, POKER_FACE_NOTES } from "../../copy/poker-face";
 import { renderCopy } from "../../copy/template";
 import {
   blitStamp,
@@ -13,6 +13,7 @@ import type {
   Challenge,
   ChallengeContext,
   ChallengeResult,
+  ChallengeVariant,
   EvidenceMark,
   FaceSignal,
   Point2D,
@@ -25,6 +26,8 @@ const SMILE_THRESHOLD = 0.16;
 const PUFF_THRESHOLD = 0.22;
 const JAW_THRESHOLD = 0.24;
 const LEAK_HOLD_MS = 250;
+/** Peak leak ratio at or below which a passing subject is flagged as suspiciously calm. */
+export const TOO_CALM_THRESHOLD = 0.15;
 
 /** Typewriter reveal speed for taunts. */
 const TYPE_CHARS_PER_SEC = 45;
@@ -57,10 +60,13 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
   private durationMs = 12_000;
   private leakMs = 0;
   private leakRatio = 0;
+  private maxLeakRatio = 0;
   private shownRatio = 0;
   private status: ChallengeResult["status"] = "running";
   private callout: string | undefined;
   private evidence: EvidenceMark | undefined;
+  private variant: ChallengeVariant | undefined;
+  private stampText: string | undefined;
   private activeTaunts: string[] = [];
   private calloutPool: readonly string[] = ["EMOTIONAL LEAK DETECTED"];
   private seed = 1;
@@ -86,10 +92,13 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
     this.durationMs = Math.max(1_000, ctx.durationMs);
     this.leakMs = 0;
     this.leakRatio = 0;
+    this.maxLeakRatio = 0;
     this.shownRatio = 0;
     this.status = "running";
     this.callout = undefined;
     this.evidence = undefined;
+    this.variant = undefined;
+    this.stampText = undefined;
     this.seed = ctx.seed;
     this.baseline = ctx.baseline;
     this.dominant = "smile";
@@ -154,6 +163,9 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
 
     const ratio = Math.max(0, smileRatio, puffRatio, jawRatio);
     this.leakRatio = Math.min(1.5, ratio);
+    if (ratio > this.maxLeakRatio) {
+      this.maxLeakRatio = ratio;
+    }
     this.shownRatio += (Math.min(1, this.leakRatio) - this.shownRatio) * Math.min(1, clampedDt / 140);
 
     if (ratio === smileRatio) {
@@ -187,6 +199,14 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
     if (this.elapsedMs >= this.durationMs) {
       this.elapsedMs = this.durationMs;
       this.status = "passed";
+      if (this.maxLeakRatio <= TOO_CALM_THRESHOLD + 1e-6) {
+        this.variant = "too-calm";
+        this.stampText = pickStampText(this.seed, true, "too-calm");
+        const rng = mulberry32((this.seed ^ 0x1b873593) >>> 0);
+        this.callout =
+          POKER_FACE_CALM_CALLOUTS[Math.floor(rng() * POKER_FACE_CALM_CALLOUTS.length)] ??
+          POKER_FACE_CALM_CALLOUTS[0];
+      }
     }
   }
 
@@ -230,6 +250,8 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
       typed: this.typedChars,
       ...(this.callout !== undefined ? { callout: this.callout } : {}),
       ...(this.evidence !== undefined ? { evidence: this.evidence } : {}),
+      ...(this.variant !== undefined ? { variant: this.variant } : {}),
+      ...(this.stampText !== undefined ? { stampText: this.stampText } : {}),
     };
   }
 

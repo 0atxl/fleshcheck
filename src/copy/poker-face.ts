@@ -91,3 +91,10 @@ export const POKER_FACE_NOTES = {
   jaw: ["Jaw movement noted.", "Jaw tension logged."],
   head: ["Head position questioned.", "Subject has shifted. Reason requested."],
 } as const;
+
+/** Finding lines used when a subject passes Poker Face with suspiciously low facial drift. */
+export const POKER_FACE_CALM_CALLOUTS = [
+  "EXCESSIVE COMPOSURE LOGGED ON FORM 27-B",
+  "ZERO AFFECT DETECTED. BOT REVIEW FILED",
+  "SUSPICIOUSLY STILL. REFERRED TO DESK FOUR",
+] as const;

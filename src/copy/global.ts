@@ -20,6 +20,13 @@ export const STAMPS_PASS = [
   "PASS: UNDER REVIEW",
 ] as const;
 
+export const STAMPS_CALM = [
+  "CLEARED: FLAGGED FOR EXCESSIVE COMPOSURE",
+  "CLEARED: SUSPICIOUSLY STILL",
+  "CLEARED: BOT REVIEW PENDING",
+  "CLEARED: UNNATURAL NEUTRALITY",
+] as const;
+
 export const STALLING_LINES = [
   "Locating chin.",
   "Verifying mammal status.",

@@ -9,7 +9,15 @@ import { drawFaceWireframe } from "../vision/wireframe";
 import { computeHumanPct } from "./scoring";
 import { mulberry32 } from "./prng";
 import { FONT_LABEL, FONT_TYPE, THEME } from "./theme";
-import type { Baseline, Challenge, ChallengeManifest, Rect2D, TryRecord, Viewport } from "./types";
+import type {
+  Baseline,
+  Challenge,
+  ChallengeManifest,
+  ChallengeVariant,
+  Rect2D,
+  TryRecord,
+  Viewport,
+} from "./types";
 
 /** Stamp slam timeline (ms). The stamp lands at APPROACH, the frame holds, then shakes. */
 export const SLAM_APPROACH_MS = 150;
@@ -111,6 +119,8 @@ export interface LoopVerdict {
   elapsedMs: number;
   durationMs: number;
   snapshot: HTMLCanvasElement;
+  variant?: ChallengeVariant;
+  stampText?: string;
   roundRecords?: TryRecord[];
 }
 
@@ -457,6 +467,11 @@ export class GameLoop {
     }
 
     const elapsedMs = Math.min(this.manifest.durationMs, Math.round(this.activeElapsedMs));
+    const variant = "variant" in res ? res.variant : undefined;
+    const explicitStamp = "stampText" in res ? res.stampText : undefined;
+    const overrideStamp =
+      explicitStamp ?? (passed && variant ? pickStampText(this.seed, true, variant) : undefined);
+
     const verdict: LoopVerdict = {
       passed,
       pct,
@@ -465,12 +480,14 @@ export class GameLoop {
       elapsedMs,
       durationMs: this.manifest.durationMs,
       snapshot: this.snapshotCanvas,
+      ...(variant ? { variant } : {}),
+      ...(overrideStamp ? { stampText: overrideStamp } : {}),
       ...(res.roundRecords ? { roundRecords: res.roundRecords } : {}),
     };
 
     this.setPhase("VERDICT");
 
-    const stampText = pickStampText(this.seed, passed);
+    const stampText = overrideStamp ?? pickStampText(this.seed, passed);
     const face = this.lastFace;
     const slam: SlamState = {
       passed,

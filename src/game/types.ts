@@ -84,11 +84,15 @@ export interface EvidenceMark {
   label: string;
 }
 
+export type ChallengeVariant = "too-calm";
+
 export interface ChallengeResult {
   status: "running" | "failed" | "passed";
   progress: number;
   callout?: string;
   evidence?: EvidenceMark;
+  variant?: ChallengeVariant;
+  stampText?: string;
   milestones?: number;
   /** Cumulative typewriter characters revealed so far; used by GameLoop for clack audio. */
   typed?: number;

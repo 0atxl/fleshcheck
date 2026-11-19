@@ -25,5 +25,12 @@
 - Persisted `lastResult` in `CaseFileStore` and passed local `copyContext` through `GameLoop` into challenges.
 - Added unit tests in `tests/template.test.ts` and extended `tests/voice.test.ts` to render and lint every templated line across multiple contexts.
 
+### B3. Pass twist: "too calm"
+- Added `STAMPS_CALM` in `src/copy/global.ts` and `POKER_FACE_CALM_CALLOUTS` in `src/copy/poker-face.ts`, both enforced by `tests/voice.test.ts`.
+- Tracked `maxLeakRatio` in `PokerFaceChallenge`; passing runs with `maxLeakRatio <= 0.15` (`TOO_CALM_THRESHOLD`) return `variant: "too-calm"`, a calm stamp override, and a matching finding callout while still counting as a 100% pass for streaks and sharing.
+- Added `variant` and `stampText` override plumbing across `ChallengeResult`, `LoopVerdict`, `pickStampText`, `GameLoop` slam rendering, `renderEvidenceCard`, and `app.ts`.
+- Added threshold-edge and stamp-override unit tests in `tests/stamp.test.ts`, `tests/challenges.test.ts`, and `tests/loop.test.ts`.
+
+
 
 

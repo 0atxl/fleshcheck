@@ -3,13 +3,13 @@ import { AFFECT_DEMO_COPY } from "../src/copy/affect-demo";
 import { BOT_DODGE_COPY } from "../src/copy/bot-dodge";
 import { EYES_ON_FORM_COPY } from "../src/copy/eyes-on-form";
 import { FULL_AUDIT_COPY } from "../src/copy/full-audit";
-import { STALLING_LINES, STAMPS_PASS, STAMPS_REJECT, UI_COPY } from "../src/copy/global";
+import { STALLING_LINES, STAMPS_CALM, STAMPS_PASS, STAMPS_REJECT, UI_COPY } from "../src/copy/global";
 import { INTERVIEW_COPY } from "../src/copy/interview";
 import { MOUTH_CATCH_COPY } from "../src/copy/mouth-catch";
 import { NOSE_CURSOR_COPY } from "../src/copy/nose-cursor";
 import { NOSE_SPOON_COPY } from "../src/copy/nose-spoon";
 import { PASSPORT_PHOTO_COPY } from "../src/copy/passport-photo";
-import { POKER_FACE_COPY, POKER_FACE_NOTES } from "../src/copy/poker-face";
+import { POKER_FACE_CALM_CALLOUTS, POKER_FACE_COPY, POKER_FACE_NOTES } from "../src/copy/poker-face";
 import { hasTemplateTokens, renderCopy, type CopyTemplateContext } from "../src/copy/template";
 import { CHALLENGES } from "../src/game/registry";
 
@@ -21,6 +21,7 @@ function gatherAllStrings(): string[] {
   const strings: string[] = [
     ...STAMPS_REJECT,
     ...STAMPS_PASS,
+    ...STAMPS_CALM,
     ...STALLING_LINES,
     UI_COPY.agency,
     UI_COPY.formCode,
@@ -36,6 +37,7 @@ function gatherAllStrings(): string[] {
     UI_COPY.nextCaseCountdown("04:12:09"),
     UI_COPY.newCaseReady("02"),
     ...Object.values(POKER_FACE_NOTES).flat(),
+    ...POKER_FACE_CALM_CALLOUTS,
     ...(POKER_FACE_COPY.taunts ?? []),
     ...POKER_FACE_COPY.callouts,
     ...(NOSE_SPOON_COPY.commentary ?? []),

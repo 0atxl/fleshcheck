@@ -22,6 +22,7 @@ export interface EvidenceCardInput {
   seed: number;
   isReplay: boolean;
   snapshot: HTMLCanvasElement | null;
+  stampText?: string;
 }
 
 const RX = 632;
@@ -46,7 +47,7 @@ export function renderEvidenceCard(
 
   // Stamp straddling the photo and the form
   const stamp = createStampBitmap(
-    pickStampText(input.seed, input.passed),
+    input.stampText ?? pickStampText(input.seed, input.passed),
     stampColor(input.passed),
     input.seed + 7,
   );

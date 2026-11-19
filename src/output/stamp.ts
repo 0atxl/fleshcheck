@@ -1,6 +1,7 @@
-import { STAMPS_PASS, STAMPS_REJECT } from "../copy/global";
+import { STAMPS_CALM, STAMPS_PASS, STAMPS_REJECT } from "../copy/global";
 import { mulberry32 } from "../game/prng";
 import { FONT_LABEL, THEME } from "../game/theme";
+import type { ChallengeVariant } from "../game/types";
 
 const BASE_W = 560;
 const BASE_H_TWO_LINE = 190;
@@ -12,7 +13,11 @@ export const STAMP_BASE_WIDTH = BASE_W;
  * Picks the day's stamp wording. Stable per seed so the stamp that hangs over
  * the player's face during the round is the same one that lands on the card.
  */
-export function pickStampText(seed: number, passed: boolean): string {
+export function pickStampText(seed: number, passed: boolean, variant?: ChallengeVariant): string {
+  if (passed && variant === "too-calm") {
+    const rng = mulberry32((seed ^ 0x7f4a7c15) >>> 0);
+    return STAMPS_CALM[Math.floor(rng() * STAMPS_CALM.length)] ?? STAMPS_CALM[0]!;
+  }
   const list = passed ? STAMPS_PASS : STAMPS_REJECT;
   const rng = mulberry32((seed ^ (passed ? 0x9e3779b1 : 0x51ed270b)) >>> 0);
   return list[Math.floor(rng() * list.length)] ?? list[0]!;

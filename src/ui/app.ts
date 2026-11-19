@@ -519,6 +519,8 @@ export function bootApp(): void {
         callout: verdict.callout,
         elapsedMs: verdict.elapsedMs,
         durationMs: verdict.durationMs,
+        ...(verdict.variant ? { variant: verdict.variant } : {}),
+        ...(verdict.stampText ? { stampText: verdict.stampText } : {}),
         ...(roundSquares ? { roundRecords: roundSquares } : {}),
       };
       // Clear any clip from an earlier try until this new best try's clip finishes finalizing
@@ -604,6 +606,7 @@ export function bootApp(): void {
       seed,
       isReplay,
       snapshot: liveBest ? bestSnapshotCanvas : null,
+      ...(liveBest?.stampText ? { stampText: liveBest.stampText } : {}),
     });
 
     const shareText = formatShareLine({

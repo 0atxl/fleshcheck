@@ -8,7 +8,8 @@ import { MOUTH_CATCH_COPY } from "../src/copy/mouth-catch";
 import { NOSE_CURSOR_COPY } from "../src/copy/nose-cursor";
 import { NOSE_SPOON_COPY } from "../src/copy/nose-spoon";
 import { PASSPORT_PHOTO_COPY } from "../src/copy/passport-photo";
-import { POKER_FACE_COPY } from "../src/copy/poker-face";
+import { POKER_FACE_CALM_CALLOUTS, POKER_FACE_COPY } from "../src/copy/poker-face";
+import { STAMPS_CALM } from "../src/copy/global";
 import { AffectDemoChallenge, computeAffectProximity, matchesAffectPrompt } from "../src/game/challenges/affect-demo";
 import { BotDodgeChallenge, computeStampOverlapRatio } from "../src/game/challenges/bot-dodge";
 import { computeHorizontalGaze, EyesOnFormChallenge } from "../src/game/challenges/eyes-on-form";
@@ -18,7 +19,7 @@ import { MouthCatchChallenge } from "../src/game/challenges/mouth-catch";
 import { NoseCursorChallenge } from "../src/game/challenges/nose-cursor";
 import { computeEyeRollRad, MAX_SPOON_ANGLE_RAD, NoseSpoonChallenge } from "../src/game/challenges/nose-spoon";
 import { PassportPhotoChallenge } from "../src/game/challenges/passport-photo";
-import { PokerFaceChallenge } from "../src/game/challenges/poker-face";
+import { PokerFaceChallenge, TOO_CALM_THRESHOLD } from "../src/game/challenges/poker-face";
 import type { Baseline, ChallengeManifest, FaceSignal } from "../src/game/types";
 import { type BlendshapeMap, MEDIAPIPE_BLENDSHAPES } from "../src/vision/blendshapes";
 import { computeBlendshapeDeltas } from "../src/vision/calibration";
@@ -691,5 +692,43 @@ describe("POKER_FACE office feedback", () => {
     const longest = (texts: string[]) =>
       Math.max(0, ...texts.filter((txt) => !/^\[/.test(txt) && !/s$/.test(txt)).map((txt) => txt.length));
     expect(longest(later.texts)).toBeGreaterThan(longest(early.texts));
+  });
+
+  it("flags passing runs as too-calm at or below the 0.15 leak ratio edge and clears normally above it", () => {
+    // At exact threshold edge (ratio = 0.15 -> smile delta = 0.15 * 0.16 = 0.024)
+    const atEdge = startPoker();
+    const edgeSmile = atEdge.baseline.shapes.mouthSmileLeft! + TOO_CALM_THRESHOLD * 0.16;
+    for (let t = 0; t < 12_000; t += 50) {
+      atEdge.poker.update(
+        50,
+        makeFaceSignal(
+          { shapes: { ...atEdge.baseline.shapes, mouthSmileLeft: edgeSmile, mouthSmileRight: edgeSmile } },
+          atEdge.baseline,
+        ),
+      );
+    }
+    const edgeRes = atEdge.poker.getResult();
+    expect(edgeRes.status).toBe("passed");
+    expect(edgeRes.variant).toBe("too-calm");
+    expect(STAMPS_CALM as readonly string[]).toContain(edgeRes.stampText);
+    expect(POKER_FACE_CALM_CALLOUTS as readonly string[]).toContain(edgeRes.callout);
+
+    // Just above threshold edge (ratio = 0.16 -> smile delta = 0.16 * 0.16 = 0.0256)
+    const aboveEdge = startPoker();
+    const normalSmile = aboveEdge.baseline.shapes.mouthSmileLeft! + (TOO_CALM_THRESHOLD + 0.01) * 0.16;
+    for (let t = 0; t < 12_000; t += 50) {
+      const smile = t === 2_000 ? normalSmile : aboveEdge.baseline.shapes.mouthSmileLeft!;
+      aboveEdge.poker.update(
+        50,
+        makeFaceSignal(
+          { shapes: { ...aboveEdge.baseline.shapes, mouthSmileLeft: smile, mouthSmileRight: smile } },
+          aboveEdge.baseline,
+        ),
+      );
+    }
+    const normalRes = aboveEdge.poker.getResult();
+    expect(normalRes.status).toBe("passed");
+    expect(normalRes.variant).toBeUndefined();
+    expect(normalRes.stampText).toBeUndefined();
   });
 });

@@ -508,4 +508,77 @@ describe("GameLoop integration", () => {
     expect(clacks).toBeLessThanOrEqual(25);
     loop.stop();
   });
+
+  it("propagates too-calm stampText override on passing verdict without losing pass score", () => {
+    const harness = installLoopHarness();
+    const stageCanvas = makeFakeCanvas() as unknown as HTMLCanvasElement;
+    const video = { readyState: 4, videoWidth: 640, videoHeight: 480 } as unknown as HTMLVideoElement;
+    const landmarker = {
+      detectForVideo: () => makeFaceResult(0.05),
+    } as unknown as FaceLandmarker;
+
+    let activeMs = 0;
+    const calmOverride = "CLEARED: FLAGGED FOR EXCESSIVE COMPOSURE";
+    const calmManifest: ChallengeManifest = {
+      id: "POKER_FACE",
+      title: "Poker Face",
+      department: "Affect Review",
+      prompt: "Hold neutral.",
+      model: "face",
+      durationMs: 2_000,
+      enabled: true,
+      copy: POKER_FACE_COPY,
+      create: (): Challenge => ({
+        init() {
+          activeMs = 0;
+        },
+        update(dtMs) {
+          activeMs += dtMs;
+        },
+        draw() {},
+        getResult(): ChallengeResult {
+          if (activeMs >= 2_000) {
+            return {
+              status: "passed",
+              progress: 1,
+              variant: "too-calm",
+              stampText: calmOverride,
+              callout: "EXCESSIVE COMPOSURE LOGGED ON FORM 27-B",
+            };
+          }
+          return { status: "running", progress: activeMs / 2_000 };
+        },
+      }),
+    };
+
+    let verdict: LoopVerdict | null = null;
+    const loop = new GameLoop(
+      stageCanvas,
+      video,
+      new FaceTracker(landmarker),
+      calmManifest,
+      1,
+      {
+        onPhaseChange() {},
+        onVerdict(v) {
+          verdict = v;
+        },
+      },
+      true,
+    );
+
+    loop.start();
+    let now = performance.now();
+    for (let i = 0; i < 90 && !verdict; i++) {
+      now += 50;
+      harness.step(now);
+    }
+
+    expect(verdict).not.toBeNull();
+    expect(verdict!.passed).toBe(true);
+    expect(verdict!.pct).toBe(100);
+    expect(verdict!.variant).toBe("too-calm");
+    expect(verdict!.stampText).toBe(calmOverride);
+    expect(verdict!.callout).toBe("EXCESSIVE COMPOSURE LOGGED ON FORM 27-B");
+  });
 });
