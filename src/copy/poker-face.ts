@@ -57,3 +57,25 @@ export const POKER_FACE_COPY: CopyBank = {
     "Remain blank. Enthusiasm is grounds for secondary screening.",
   ],
 };
+
+/**
+ * Case notes the office types about the subject while the round runs.
+ * Triggered by small movements well below the fail threshold, so the player
+ * feels watched. Sentence case, no exclamation marks (see docs/voice.md).
+ */
+export const POKER_FACE_NOTES = {
+  blink: ["Blink recorded.", "Second blink recorded. Pattern forming.", "Blink noted. Frequency concerning."],
+  brow: [
+    "Brow movement noted.",
+    "Eyebrow activity logged without authorization.",
+    "Brow position has changed since intake.",
+  ],
+  mouth: [
+    "Mouth corner deviation noted.",
+    "Upward drift at the mouth logged.",
+    "Lip activity noted. Cause requested.",
+  ],
+  cheek: ["Cheek pressure logged.", "Cheek activity noted. Cause unclear."],
+  jaw: ["Jaw movement noted.", "Jaw tension logged."],
+  head: ["Head position questioned.", "Subject has shifted. Reason requested."],
+} as const;

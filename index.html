@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#F6F7F4" />
+    <meta name="theme-color" content="#E8E2D0" />
     <meta
       name="description"
       content="Daily 12-second on-device webcam compliance check from the Office of Biological Verification. Zero video frames leave your browser."
@@ -29,7 +29,7 @@
     <link
       rel="icon"
       type="image/svg+xml"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23F6F7F4'/%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%231A1D1E' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='5' fill='none' stroke='%23E8590C' stroke-width='2.5'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23E8E2D0'/%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%231A1A18' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='5' fill='none' stroke='%23B3261E' stroke-width='2.5'/%3E%3C/svg%3E"
     />
   </head>
   <body>
@@ -55,8 +55,23 @@
         <h1 class="page-title" id="main-heading">Biological Compliance Check</h1>
         <p class="briefing-line" id="challenge-prompt"></p>
 
+        <dl class="field-row" id="field-row">
+          <div class="field">
+            <dt>Case no.</dt>
+            <dd id="field-case"></dd>
+          </div>
+          <div class="field">
+            <dt>Department</dt>
+            <dd id="field-dept"></dd>
+          </div>
+          <div class="field">
+            <dt>Date filed</dt>
+            <dd id="field-date"></dd>
+          </div>
+        </dl>
+
         <section class="panel" id="panel-intro">
-          <p class="privacy-hint" id="privacy-notice"></p>
+          <p class="declaration-heading"><span class="declaration-num">7.</span> Applicant declaration</p>
 
           <div class="captcha-box" id="captcha-widget">
             <label class="captcha-label" for="verify-human">
@@ -71,7 +86,7 @@
             <div class="captcha-seal" aria-hidden="true">
               <svg class="seal-svg" viewBox="0 0 32 32" fill="none">
                 <circle cx="16" cy="16" r="13" stroke="currentColor" stroke-width="2" />
-                <circle cx="16" cy="16" r="7" stroke="#E8590C" stroke-width="2" />
+                <circle cx="16" cy="16" r="7" stroke="#B3261E" stroke-width="2" />
                 <path d="M16 3v5M16 24v5M3 16h5M24 16h5" stroke="currentColor" stroke-width="1.5" />
               </svg>
               <span>OBV<br />UNIT 01</span>
@@ -82,13 +97,14 @@
             <span id="meta-tries"></span>
             <span id="meta-streak"></span>
           </div>
+
+          <p class="privacy-hint" id="privacy-notice"></p>
         </section>
 
         <section class="panel" id="panel-loading" hidden>
           <div class="loading-box">
-            <div class="spinner-ring" aria-hidden="true"></div>
-            <p class="loading-status" id="loading-status">Initializing inspection booth.</p>
-            <progress class="loading-progress" aria-label="Preparing verification booth"></progress>
+            <p class="loading-status" id="loading-status" role="status">Initializing inspection booth.</p>
+            <p class="loading-fine">Your request is important to us. Please remain human.</p>
           </div>
         </section>
 
@@ -103,7 +119,7 @@
             ></canvas>
             <div class="stage-controls">
               <p class="stage-prompt" id="stage-status-note" aria-live="polite">Stay inside the camera frame.</p>
-              <button type="button" class="btn btn-quiet" id="abort-round">Cancel inspection</button>
+              <button type="button" class="btn btn-quiet" id="abort-round">Withdraw application</button>
             </div>
           </div>
         </section>
@@ -130,11 +146,9 @@
             <pre class="share-preview" id="share-text-value"></pre>
 
             <div class="action-bar">
-              <button type="button" class="btn btn-accent" id="retry-try" hidden>Retry check</button>
+              <button type="button" class="btn btn-accent" id="retry-try" hidden>Try again</button>
               <button type="button" class="btn btn-primary" id="share-native" hidden>Share evidence</button>
-              <button type="button" class="btn btn-primary" id="download-png">Save evidence PNG</button>
-              <button type="button" class="btn" id="download-clip" hidden>Save fail clip</button>
-
+              <button type="button" class="btn" id="download-png">Save evidence PNG</button>
               <span class="copy">
                 <button
                   type="button"
@@ -147,40 +161,47 @@
                 </button>
                 <span class="tip" role="status"></span>
               </span>
-
-              <a
-                class="btn"
-                id="post-x-link"
-                href="https://x.com/intent/tweet"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Post to X
-              </a>
             </div>
 
-            <div class="link-field-row">
-              <label class="visually-hidden" for="challenge-link-value">Friend challenge link</label>
-              <input
-                id="challenge-link-value"
-                class="link-readonly"
-                type="text"
-                readonly
-                value=""
-              />
-              <span class="copy">
-                <button
-                  type="button"
-                  class="btn copy-button"
-                  id="copy-link-btn"
-                  command="--copy"
-                  commandfor="challenge-link-value"
-                >
-                  Copy challenge link
-                </button>
-                <span class="tip" role="status"></span>
-              </span>
-            </div>
+            <details class="more-actions">
+              <summary class="btn btn-quiet">More ways to share</summary>
+              <div class="more-body">
+                <div class="action-bar">
+                  <button type="button" class="btn" id="download-clip" hidden>Save fail clip</button>
+                  <a
+                    class="btn"
+                    id="post-x-link"
+                    href="https://x.com/intent/tweet"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Post to X
+                  </a>
+                </div>
+                <div class="link-field-row">
+                  <label class="visually-hidden" for="challenge-link-value">Friend challenge link</label>
+                  <input
+                    id="challenge-link-value"
+                    class="link-readonly"
+                    type="text"
+                    readonly
+                    value=""
+                  />
+                  <span class="copy">
+                    <button
+                      type="button"
+                      class="btn copy-button"
+                      id="copy-link-btn"
+                      command="--copy"
+                      commandfor="challenge-link-value"
+                    >
+                      Copy challenge link
+                    </button>
+                    <span class="tip" role="status"></span>
+                  </span>
+                </div>
+              </div>
+            </details>
 
             <div class="next-case-row" id="next-case-row" hidden>
               <span class="next-case-text" id="next-case-text"></span>

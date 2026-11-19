@@ -4,7 +4,7 @@ import { FULL_AUDIT_COPY } from "../src/copy/full-audit";
 import { POKER_FACE_COPY } from "../src/copy/poker-face";
 import { FullAuditChallenge } from "../src/game/challenges/full-audit";
 import { PokerFaceChallenge } from "../src/game/challenges/poker-face";
-import { GameLoop, type LoopVerdict } from "../src/game/loop";
+import { GameLoop, SLAM_APPROACH_MS, SLAM_TOTAL_FAIL_MS, type LoopVerdict } from "../src/game/loop";
 import type { Challenge, ChallengeManifest, ChallengeResult } from "../src/game/types";
 import { FaceTracker } from "../src/vision/tracker";
 
@@ -127,7 +127,7 @@ function installLoopHarness() {
 }
 
 describe("GameLoop integration", () => {
-  it("reports true active elapsedMs and runs 240ms fail impact shake before firing onVerdict", () => {
+  it("reports true active elapsedMs and holds the stamp slam before firing onVerdict", () => {
     const harness = installLoopHarness();
     const stageCanvas = makeFakeCanvas() as unknown as HTMLCanvasElement;
     const video = { readyState: 4, videoWidth: 640, videoHeight: 480 } as unknown as HTMLVideoElement;
@@ -180,7 +180,7 @@ describe("GameLoop integration", () => {
           thuds += 1;
         },
       },
-      false, // reducedMotion = false => 240ms impact shake enabled
+      false, // reducedMotion = false => stamp slam sequence enabled
     );
 
     loop.start();
@@ -198,18 +198,29 @@ describe("GameLoop integration", () => {
       harness.step(now);
     }
 
-    // Thud played immediately, but onVerdict waits for 240ms shake to finish
-    expect(thuds).toBe(1);
+    // The thud is synced to the stamp landing, not the fail frame, and the verdict waits for the slam
+    expect(thuds).toBe(0);
     expect(verdict).toBeNull();
     expect(harness.pendingCount()).toBe(1);
 
-    // Advance through the 240ms shake
-    for (let i = 0; i < 6; i++) {
+    // Step to just past the impact
+    const impactSteps = Math.ceil(SLAM_APPROACH_MS / 50) + 1;
+    for (let i = 0; i < impactSteps; i++) {
+      now += 50;
+      harness.step(now);
+    }
+    expect(thuds).toBe(1);
+    expect(verdict).toBeNull();
+
+    // Advance through the rest of the slam
+    const totalSteps = Math.ceil(SLAM_TOTAL_FAIL_MS / 50) + 2;
+    for (let i = 0; i < totalSteps; i++) {
       now += 50;
       harness.step(now);
       if (verdict) break;
     }
 
+    expect(thuds).toBe(1);
     expect(verdict).not.toBeNull();
     // Real active elapsedMs is ~1000ms (NOT fabricated 0.25 * 12000 = 3000ms!)
     expect(verdict!.elapsedMs).toBeGreaterThanOrEqual(950);

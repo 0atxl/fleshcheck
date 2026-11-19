@@ -77,10 +77,17 @@ export interface TryRecord {
   paused: boolean;
 }
 
+/** Region of the frame (canvas space) that caused a failure, with an instrument-style reading. */
+export interface EvidenceMark {
+  rect: Rect2D;
+  label: string;
+}
+
 export interface ChallengeResult {
   status: "running" | "failed" | "passed";
   progress: number;
   callout?: string;
+  evidence?: EvidenceMark;
   milestones?: number;
   roundRecords?: TryRecord[];
 }
@@ -109,6 +116,8 @@ export interface ChallengeManifest {
   model: "face" | "hands";
   durationMs: number;
   maxTries?: number;
+  /** Skip the always-on face wireframe during the round (the challenge draws its own feedback). */
+  hideWireframe?: boolean;
   enabled: boolean;
   copy: CopyBank;
   create: () => Challenge;

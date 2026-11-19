@@ -11,7 +11,7 @@ const LIPS_OUTER = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270,
 export function drawFaceWireframe(
   ctx: CanvasRenderingContext2D,
   landmarks: readonly Point2D[],
-  color = "rgba(232, 89, 12, 0.72)",
+  color = "rgba(232, 226, 208, 0.78)",
 ): void {
   if (landmarks.length === 0) return;
 

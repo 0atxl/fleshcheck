@@ -15,6 +15,7 @@ import { formatShareLine, formatTrySquare } from "../game/scoring";
 import type { ChallengeManifest, TryRecord } from "../game/types";
 import { initCopyHandlers } from "../lib/copy";
 import { canvasToPngBlob, downloadBlob } from "../lib/export-png";
+import { ensureFonts } from "../game/theme";
 import { ComplianceSfx } from "../lib/sfx";
 import { RoundClipRecorder, type RecordedClip } from "../output/clip";
 import { renderEvidenceCard } from "../output/evidence-card";
@@ -66,6 +67,9 @@ export function bootApp(): void {
   const checkbox = mustGet<HTMLInputElement>("verify-human");
   const checkboxLabelEl = mustGet<HTMLElement>("verify-human-label");
   const captchaWidget = mustGet<HTMLElement>("captcha-widget");
+  const fieldCase = mustGet<HTMLElement>("field-case");
+  const fieldDept = mustGet<HTMLElement>("field-dept");
+  const fieldDate = mustGet<HTMLElement>("field-date");
   const metaTries = mustGet<HTMLElement>("meta-tries");
   const metaStreak = mustGet<HTMLElement>("meta-streak");
 
@@ -111,6 +115,13 @@ export function bootApp(): void {
     deptKicker.textContent = `${UI_COPY.agency.toUpperCase()} · ${manifest.department.toUpperCase()}`;
     mainHeading.textContent = manifest.title;
     promptEl.textContent = manifest.prompt;
+    fieldCase.textContent = `#${dayStr}${isReplay ? " (replay)" : ""}`;
+    fieldDept.textContent = manifest.department;
+    fieldDate.textContent = new Date().toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
   }
 
   syncHeaderCopy();
@@ -149,11 +160,15 @@ export function bootApp(): void {
   shareNativeBtn.hidden = !nativeShareSupported;
 
   const panels = [panelIntro, panelLoading, panelStage, panelNoFlesh, panelVerdict];
+  document.body.dataset.view = "intro";
+  // Canvas text only uses webfonts once loaded; start early so the HUD never falls back.
+  void ensureFonts();
 
   async function switchPanel(target: HTMLElement, focusEl?: HTMLElement | null): Promise<void> {
     const myPanelToken = ++panelToken;
     await Promise.all(panels.filter((p) => p !== target).map((p) => hidePanel(p)));
     if (myPanelToken !== panelToken) return;
+    document.body.dataset.view = target.id.replace("panel-", "");
     showPanel(target);
     if (focusEl && !focusEl.hidden) {
       focusEl.focus({ preventScroll: true });
@@ -312,6 +327,7 @@ export function bootApp(): void {
     stageCanvas.height = portrait ? 640 : 480;
     // Pin CSS aspect ratio to active backing dimensions so mid-round resize/rotation never stretches video
     stageCanvas.style.aspectRatio = `${stageCanvas.width} / ${stageCanvas.height}`;
+    stageCanvas.style.setProperty("--ar-num", String(stageCanvas.width / stageCanvas.height));
   }
 
   async function showFailurePanel(kind: "camera" | "engine", showWebViewHint: boolean): Promise<void> {
@@ -379,6 +395,8 @@ export function bootApp(): void {
     const tracker = new FaceTracker(landmarkerResult.value);
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    await ensureFonts();
+    if (myToken !== sessionToken) return;
     await switchPanel(panelStage, abortBtn);
     if (myToken !== sessionToken) return;
 
@@ -415,6 +433,7 @@ export function bootApp(): void {
         playMilestone: () => sfx.playMilestone(),
       },
       reducedMotion,
+      { caseLabel: `CASE #${dayStr}` },
     );
     activeLoop.start();
   }

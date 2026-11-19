@@ -29,6 +29,7 @@ export const CHALLENGES: ChallengeManifest[] = [
     prompt: "Maintain a neutral expression during compliance review.",
     model: "face",
     durationMs: DEFAULT_DURATION_MS,
+    hideWireframe: true,
     enabled: true,
     copy: POKER_FACE_COPY,
     create: () => new PokerFaceChallenge(),

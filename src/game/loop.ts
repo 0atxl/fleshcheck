@@ -1,12 +1,22 @@
 import { CALIBRATION_MS, MAX_PAUSES_PER_TRY } from "../config";
+import { drawEvidenceAnnotation } from "../output/annotation";
+import { blitStamp, createStampBitmap, pickStampText, stampColor } from "../output/stamp";
 import { CalibrationCollector } from "../vision/calibration";
 import { coverRect } from "../vision/geometry";
 import type { FaceTracker } from "../vision/tracker";
 import { drawFaceWireframe } from "../vision/wireframe";
 import { computeHumanPct } from "./scoring";
-import type { Baseline, Challenge, ChallengeManifest, TryRecord, Viewport } from "./types";
+import { mulberry32 } from "./prng";
+import { FONT_LABEL, FONT_TYPE, THEME } from "./theme";
+import type { Baseline, Challenge, ChallengeManifest, Rect2D, TryRecord, Viewport } from "./types";
 
-const FAIL_SHAKE_MS = 240;
+/** Stamp slam timeline (ms). The stamp lands at APPROACH, the frame holds, then shakes. */
+export const SLAM_APPROACH_MS = 150;
+export const SLAM_FREEZE_MS = 80;
+export const SLAM_SHAKE_MS = 320;
+export const SLAM_TOTAL_FAIL_MS = 1_100;
+export const SLAM_TOTAL_PASS_MS = 800;
+
 const HAVE_CURRENT_DATA = 2;
 
 export type GamePhase =
@@ -38,9 +48,28 @@ export interface LoopCallbacks {
   playMilestone?(): void;
 }
 
+export interface GameLoopOptions {
+  /** Burned into the corner of the camera feed, e.g. "CASE #12". */
+  caseLabel?: string;
+}
+
+interface SlamState {
+  passed: boolean;
+  elapsedMs: number;
+  totalMs: number;
+  impacted: boolean;
+  stamp: HTMLCanvasElement | null;
+  color: string;
+  cx: number;
+  cy: number;
+  width: number;
+  splats: Array<{ dx: number; dy: number; r: number }>;
+}
+
 /**
  * Single requestAnimationFrame loop driving video rendering, calibration,
- * pause-on-loss logic, challenge physics, fail impact shake, and freeze-frame capture.
+ * pause-on-loss logic, challenge physics, the stamp-slam verdict sequence,
+ * and freeze-frame capture.
  */
 export class GameLoop {
   private phase: GamePhase = "IDLE";
@@ -52,10 +81,13 @@ export class GameLoop {
   private challenge: Challenge | null = null;
   private baseline: Baseline | null = null;
   private calibration = new CalibrationCollector(CALIBRATION_MS);
-  private shakeRemainingMs = 0;
   private pendingVerdict: LoopVerdict | null = null;
+  private slam: SlamState | null = null;
+  private lastFace: Rect2D | null = null;
+  private scanPattern: CanvasPattern | null = null;
   private readonly snapshotCanvas: HTMLCanvasElement;
   private readonly firstSubFailCanvas: HTMLCanvasElement;
+  private readonly cleanCanvas: HTMLCanvasElement;
   private hasSubFailSnapshot = false;
   private seenSubRounds = 0;
   private seenMilestones = 0;
@@ -68,9 +100,11 @@ export class GameLoop {
     private readonly seed: number,
     private readonly callbacks: LoopCallbacks,
     private readonly reducedMotion = false,
+    private readonly options: GameLoopOptions = {},
   ) {
     this.snapshotCanvas = document.createElement("canvas");
     this.firstSubFailCanvas = document.createElement("canvas");
+    this.cleanCanvas = document.createElement("canvas");
   }
 
   start(): void {
@@ -78,8 +112,9 @@ export class GameLoop {
     this.activeElapsedMs = 0;
     this.pausesUsed = 0;
     this.pausedBefore = false;
-    this.shakeRemainingMs = 0;
     this.pendingVerdict = null;
+    this.slam = null;
+    this.lastFace = null;
     this.challenge = null;
     this.baseline = null;
     this.hasSubFailSnapshot = false;
@@ -94,7 +129,7 @@ export class GameLoop {
 
   stop(): void {
     this.pendingVerdict = null;
-    this.shakeRemainingMs = 0;
+    this.slam = null;
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
       this.rafId = 0;
@@ -106,6 +141,8 @@ export class GameLoop {
     this.snapshotCanvas.height = 0;
     this.firstSubFailCanvas.width = 0;
     this.firstSubFailCanvas.height = 0;
+    this.cleanCanvas.width = 0;
+    this.cleanCanvas.height = 0;
   }
 
   private setPhase(next: GamePhase): void {
@@ -123,13 +160,23 @@ export class GameLoop {
 
     const vp: Viewport = { width: this.canvas.width, height: this.canvas.height };
 
-    // Brief frozen impact shake after a failed verdict before switching to evidence card
-    if (this.phase === "VERDICT" && this.pendingVerdict) {
-      this.shakeRemainingMs = Math.max(0, this.shakeRemainingMs - dtMs);
-      this.drawFailImpactFrame(ctx, vp);
-      if (this.shakeRemainingMs <= 0) {
+    // Stamp slam: the verdict beat. Holds the frozen evidence frame while the stamp lands.
+    if (this.phase === "VERDICT" && this.pendingVerdict && this.slam) {
+      const slam = this.slam;
+      slam.elapsedMs += dtMs;
+      if (!slam.impacted && slam.elapsedMs >= SLAM_APPROACH_MS) {
+        slam.impacted = true;
+        if (slam.passed) {
+          this.callbacks.playPassChime?.();
+        } else {
+          this.callbacks.playStampThud?.();
+        }
+      }
+      this.drawSlamFrame(ctx, vp);
+      if (slam.elapsedMs >= slam.totalMs) {
         const verdict = this.pendingVerdict;
         this.pendingVerdict = null;
+        this.slam = null;
         this.rafId = 0;
         this.callbacks.onVerdict(verdict);
         return;
@@ -149,14 +196,25 @@ export class GameLoop {
       ctx.drawImage(this.video, 0, 0, rect.dw, rect.dh);
       ctx.restore();
     } else {
-      ctx.fillStyle = "#1A1D1E";
+      ctx.fillStyle = THEME.screen;
       ctx.fillRect(0, 0, vp.width, vp.height);
+    }
+
+    // Surveillance treatment: part of the "clean" frame that ends up on the evidence card
+    this.drawSurveillance(ctx, vp, this.phase === "ACTIVE");
+    if (this.phase === "ACTIVE") {
+      this.captureCleanFrame(vp);
     }
 
     const frame = this.tracker.step(this.video, nowMs, dtMs, rect, this.baseline, true);
 
     if (frame.signal.tracked) {
-      drawFaceWireframe(ctx, frame.signal.landmarks);
+      this.lastFace = frame.signal.faceBox;
+      const showWire =
+        this.phase === "CALIBRATING" || (this.phase === "ACTIVE" && !this.manifest.hideWireframe);
+      if (showWire) {
+        drawFaceWireframe(ctx, frame.signal.landmarks);
+      }
     }
 
     if (this.phase === "CALIBRATING") {
@@ -220,7 +278,7 @@ export class GameLoop {
               if (!this.hasSubFailSnapshot) {
                 this.firstSubFailCanvas.width = vp.width;
                 this.firstSubFailCanvas.height = vp.height;
-                this.firstSubFailCanvas.getContext("2d")?.drawImage(this.canvas, 0, 0);
+                this.firstSubFailCanvas.getContext("2d")?.drawImage(this.cleanCanvas, 0, 0);
                 this.hasSubFailSnapshot = true;
               }
               if (res.status === "running") {
@@ -268,21 +326,21 @@ export class GameLoop {
     const status = passed ? "passed" : "failed";
     const pct = computeHumanPct(res.progress, status);
 
+    // Evidence frame: the clean camera frame (no HUD), annotated with the offending feature.
     this.snapshotCanvas.width = vp.width;
     this.snapshotCanvas.height = vp.height;
     const snapCtx = this.snapshotCanvas.getContext("2d");
     if (snapCtx) {
-      if (this.hasSubFailSnapshot && this.firstSubFailCanvas.width > 0) {
-        snapCtx.drawImage(this.firstSubFailCanvas, 0, 0);
-      } else {
-        snapCtx.drawImage(this.canvas, 0, 0);
+      const useSubFail = this.hasSubFailSnapshot && this.firstSubFailCanvas.width > 0;
+      const source = useSubFail
+        ? this.firstSubFailCanvas
+        : this.cleanCanvas.width > 0
+          ? this.cleanCanvas
+          : this.canvas;
+      snapCtx.drawImage(source, 0, 0);
+      if (!useSubFail && !passed && "evidence" in res && res.evidence) {
+        drawEvidenceAnnotation(snapCtx, res.evidence);
       }
-    }
-
-    if (!passed) {
-      this.callbacks.playStampThud?.();
-    } else {
-      this.callbacks.playPassChime?.();
     }
 
     const elapsedMs = Math.min(this.manifest.durationMs, Math.round(this.activeElapsedMs));
@@ -299,38 +357,207 @@ export class GameLoop {
 
     this.setPhase("VERDICT");
 
-    if (!passed && !this.reducedMotion) {
-      this.shakeRemainingMs = FAIL_SHAKE_MS;
-      this.pendingVerdict = verdict;
-      this.drawFailImpactFrame(ctx, vp);
-      this.rafId = requestAnimationFrame(this.tick);
+    const stampText = pickStampText(this.seed, passed);
+    const face = this.lastFace;
+    const slam: SlamState = {
+      passed,
+      elapsedMs: 0,
+      totalMs: passed ? SLAM_TOTAL_PASS_MS : SLAM_TOTAL_FAIL_MS,
+      impacted: false,
+      stamp: createStampBitmap(stampText, stampColor(passed), this.seed),
+      color: stampColor(passed),
+      cx: face && face.w > 0 ? face.x + face.w / 2 : vp.width / 2,
+      cy: face && face.h > 0 ? face.y + face.h * 0.34 : vp.height * 0.4,
+      width: Math.min(vp.width * 0.7, 440),
+      splats: [],
+    };
+    const rng = mulberry32(this.seed ^ 0x5bd1e995);
+    for (let i = 0; i < 16; i++) {
+      const angle = rng() * Math.PI * 2;
+      const reach = 0.52 + rng() * 0.2;
+      slam.splats.push({
+        dx: Math.cos(angle) * slam.width * reach,
+        dy: Math.sin(angle) * slam.width * reach * 0.42,
+        r: 1.5 + rng() * 3,
+      });
+    }
+    this.slam = slam;
+
+    if (this.reducedMotion) {
+      // No animation: show the landed stamp and report immediately.
+      slam.elapsedMs = SLAM_APPROACH_MS + SLAM_FREEZE_MS + SLAM_SHAKE_MS + 200;
+      slam.impacted = true;
+      this.drawSlamFrame(ctx, vp);
+      if (passed) {
+        this.callbacks.playPassChime?.();
+      } else {
+        this.callbacks.playStampThud?.();
+      }
+      this.slam = null;
+      this.rafId = 0;
+      this.callbacks.onVerdict(verdict);
       return;
     }
 
-    // Draw verdict tint on live canvas briefly while frozen
+    this.pendingVerdict = verdict;
+    this.drawSlamFrame(ctx, vp);
+    this.rafId = requestAnimationFrame(this.tick);
+  }
+
+  private captureCleanFrame(vp: Viewport): void {
+    if (this.cleanCanvas.width !== vp.width || this.cleanCanvas.height !== vp.height) {
+      this.cleanCanvas.width = vp.width;
+      this.cleanCanvas.height = vp.height;
+    }
+    this.cleanCanvas.getContext("2d")?.drawImage(this.canvas, 0, 0);
+  }
+
+  /**
+   * Treats the feed like office CCTV: desaturated, warm, vignetted, scanlined,
+   * with the case number and clock burned in.
+   */
+  private drawSurveillance(ctx: CanvasRenderingContext2D, vp: Viewport, recording: boolean): void {
     ctx.save();
-    ctx.fillStyle = passed ? "rgba(35, 112, 50, 0.25)" : "rgba(201, 42, 42, 0.25)";
+    ctx.globalCompositeOperation = "saturation";
+    ctx.globalAlpha = 0.72;
+    ctx.fillStyle = "#808080";
+    ctx.fillRect(0, 0, vp.width, vp.height);
+    ctx.globalCompositeOperation = "multiply";
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = THEME.paper;
     ctx.fillRect(0, 0, vp.width, vp.height);
     ctx.restore();
 
-    this.rafId = 0;
-    this.callbacks.onVerdict(verdict);
+    if (typeof ctx.createRadialGradient === "function") {
+      const cx = vp.width / 2;
+      const cy = vp.height / 2;
+      const g = ctx.createRadialGradient(
+        cx,
+        cy,
+        Math.min(vp.width, vp.height) * 0.36,
+        cx,
+        cy,
+        Math.max(vp.width, vp.height) * 0.72,
+      );
+      g.addColorStop(0, "rgba(0, 0, 0, 0)");
+      g.addColorStop(1, "rgba(0, 0, 0, 0.5)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, vp.width, vp.height);
+    }
+
+    const pattern = this.getScanPattern(ctx);
+    if (pattern) {
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, vp.width, vp.height);
+    }
+
+    const now = new Date();
+    const clock = [now.getHours(), now.getMinutes(), now.getSeconds()]
+      .map((n) => String(n).padStart(2, "0"))
+      .join(":");
+    const label = `${this.options.caseLabel ?? "CASE"} · CAM 04 · ${clock}`;
+    ctx.save();
+    ctx.font = `600 12px ${FONT_TYPE}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+    ctx.fillText(label, 13, 29);
+    ctx.fillStyle = THEME.paper;
+    ctx.fillText(label, 12, 28);
+    if (recording && Math.floor(performance.now() / 600) % 2 === 0) {
+      const w = ctx.measureText(label).width;
+      ctx.fillStyle = THEME.stampRed;
+      ctx.beginPath();
+      ctx.arc(12 + w + 12, 28, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
-  private drawFailImpactFrame(ctx: CanvasRenderingContext2D, vp: Viewport): void {
-    const amp = (this.shakeRemainingMs / FAIL_SHAKE_MS) * 8;
-    const ox = (Math.random() - 0.5) * amp * 2;
-    const oy = (Math.random() - 0.5) * amp * 2;
+  private getScanPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+    if (this.scanPattern) return this.scanPattern;
+    if (typeof ctx.createPattern !== "function") return null;
+    const tile = document.createElement("canvas");
+    tile.width = 4;
+    tile.height = 4;
+    const tctx = tile.getContext("2d");
+    if (!tctx) return null;
+    tctx.fillStyle = "rgba(0, 0, 0, 0.13)";
+    tctx.fillRect(0, 0, 4, 1);
+    this.scanPattern = ctx.createPattern(tile, "repeat");
+    return this.scanPattern;
+  }
+
+  private drawSlamFrame(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+    const slam = this.slam;
+    if (!slam) return;
+    const t = slam.elapsedMs;
+    const sinceImpact = t - SLAM_APPROACH_MS;
+
+    // Hit-stop first, then a decaying shake (fails only)
+    let ox = 0;
+    let oy = 0;
+    if (!slam.passed && sinceImpact > SLAM_FREEZE_MS && sinceImpact < SLAM_FREEZE_MS + SLAM_SHAKE_MS) {
+      const k = 1 - (sinceImpact - SLAM_FREEZE_MS) / SLAM_SHAKE_MS;
+      const amp = 9 * k * k;
+      ox = (Math.random() - 0.5) * 2 * amp;
+      oy = (Math.random() - 0.5) * 2 * amp;
+    }
 
     ctx.save();
-    ctx.fillStyle = "#1A1D1E";
+    ctx.fillStyle = THEME.screen;
     ctx.fillRect(0, 0, vp.width, vp.height);
     ctx.translate(ox, oy);
     if (this.snapshotCanvas.width > 0) {
       ctx.drawImage(this.snapshotCanvas, 0, 0);
     }
-    ctx.fillStyle = "rgba(201, 42, 42, 0.24)";
+    const dim = Math.min(1, Math.max(0, t / SLAM_APPROACH_MS)) * 0.26;
+    ctx.fillStyle = `rgba(20, 19, 15, ${dim.toFixed(3)})`;
     ctx.fillRect(0, 0, vp.width, vp.height);
+
+    if (slam.stamp) {
+      if (t < SLAM_APPROACH_MS) {
+        const p = Math.max(0, t / SLAM_APPROACH_MS);
+        const e = p * p * p;
+        blitStamp(ctx, slam.stamp, {
+          cx: slam.cx,
+          cy: slam.cy,
+          width: slam.width * (2.7 - 1.7 * e),
+          rotation: -0.1 - (1 - e) * 0.05,
+          alpha: 0.3 + 0.6 * e,
+        });
+      } else {
+        const squash = sinceImpact < SLAM_FREEZE_MS ? 1 : Math.max(0, 1 - (sinceImpact - SLAM_FREEZE_MS) / 140);
+        blitStamp(ctx, slam.stamp, {
+          cx: slam.cx,
+          cy: slam.cy,
+          width: slam.width,
+          rotation: -0.1,
+          scaleX: 1 + 0.07 * squash,
+          scaleY: 1 - 0.07 * squash,
+          alpha: 0.95,
+        });
+      }
+    }
+
+    // Ink splatter around the impression
+    if (slam.impacted) {
+      ctx.fillStyle = slam.color;
+      ctx.globalAlpha = 0.55;
+      for (const s of slam.splats) {
+        ctx.beginPath();
+        ctx.arc(slam.cx + s.dx, slam.cy + s.dy, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Impact flash
+    if (sinceImpact >= 0 && sinceImpact < 70) {
+      const peak = slam.passed ? 0.16 : 0.3;
+      ctx.fillStyle = `rgba(243, 239, 226, ${(peak * (1 - sinceImpact / 70)).toFixed(3)})`;
+      ctx.fillRect(-12, -12, vp.width + 24, vp.height + 24);
+    }
     ctx.restore();
   }
 
@@ -340,46 +567,69 @@ export class GameLoop {
     progress: number,
     tracked: boolean,
   ): void {
+    const compact = vp.width < 520;
     ctx.save();
-    ctx.fillStyle = "rgba(26, 29, 30, 0.78)";
-    ctx.fillRect(0, 0, vp.width, 64);
 
-    ctx.fillStyle = "#F6F7F4";
-    ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.textAlign = "center";
+    // Passport-style framing oval
+    ctx.setLineDash([10, 8]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = tracked ? "rgba(232, 226, 208, 0.85)" : "rgba(179, 38, 30, 0.95)";
+    ctx.beginPath();
+    ctx.ellipse(vp.width / 2, vp.height * 0.46, vp.width * 0.24, vp.height * 0.32, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const margin = 14;
+    const stripH = 72;
+    const y = vp.height - stripH - margin;
+    ctx.fillStyle = THEME.paper;
+    ctx.fillRect(margin, y, vp.width - margin * 2, stripH);
+
+    ctx.fillStyle = THEME.ink;
+    ctx.font = `600 ${compact ? 16 : 18}px ${FONT_TYPE}`;
+    ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     ctx.fillText(
-      tracked ? "HOLD STILL · CALIBRATING FLESH" : "POSITION FACE IN FRAME",
-      vp.width / 2,
-      26,
+      tracked ? "Hold still. Establishing your neutral." : "Position your face in the oval.",
+      margin + 14,
+      y + 26,
+      vp.width - margin * 2 - 28,
     );
 
-    const barW = Math.min(240, vp.width - 64);
-    const barX = (vp.width - barW) / 2;
-    ctx.fillStyle = "rgba(246, 247, 244, 0.2)";
-    ctx.fillRect(barX, 44, barW, 6);
-    ctx.fillStyle = "#E8590C";
-    ctx.fillRect(barX, 44, barW * progress, 6);
+    const barX = margin + 14;
+    const barW = vp.width - margin * 2 - 28;
+    ctx.fillStyle = "rgba(26, 26, 24, 0.18)";
+    ctx.fillRect(barX, y + 50, barW, 6);
+    ctx.fillStyle = THEME.ink;
+    ctx.fillRect(barX, y + 50, barW * progress, 6);
     ctx.restore();
   }
 
   private drawPausedOverlay(ctx: CanvasRenderingContext2D, vp: Viewport): void {
     ctx.save();
-    ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
+    ctx.fillStyle = "rgba(20, 19, 15, 0.62)";
     ctx.fillRect(0, 0, vp.width, vp.height);
 
-    ctx.fillStyle = "#F6F7F4";
-    ctx.font = "700 16px ui-monospace, SFMono-Regular, Menlo, monospace";
+    const w = Math.min(vp.width - 28, 420);
+    const h = 84;
+    const x = (vp.width - w) / 2;
+    const y = (vp.height - h) / 2;
+    ctx.fillStyle = THEME.paper;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = THEME.ink;
+    ctx.fillRect(x, y + h - 3, w, 3);
+
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("SUBJECT LOST · RETURN TO FRAME", vp.width / 2, vp.height / 2 - 12);
+    ctx.font = `600 ${vp.width < 520 ? 17 : 19}px ${FONT_TYPE}`;
+    ctx.fillText("Subject lost. Return to frame.", vp.width / 2, y + 30, w - 24);
 
-    ctx.font = "500 12px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#E8590C";
+    ctx.font = `700 14px ${FONT_LABEL}`;
+    ctx.fillStyle = THEME.stampRed;
     ctx.fillText(
       `PAUSE ${Math.min(this.pausesUsed, MAX_PAUSES_PER_TRY)} OF ${MAX_PAUSES_PER_TRY}`,
       vp.width / 2,
-      vp.height / 2 + 16,
+      y + 58,
     );
     ctx.restore();
   }

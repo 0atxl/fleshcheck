@@ -606,3 +606,90 @@ describe("Phase 4 FULL_AUDIT challenge", () => {
     expect(res.progress).toBeLessThan(1);
   });
 });
+
+describe("POKER_FACE office feedback", () => {
+  function startPoker(seed = 9) {
+    const baseline = baseBaseline();
+    const poker = new PokerFaceChallenge();
+    poker.init({
+      seed,
+      baseline,
+      copy: POKER_FACE_COPY,
+      viewport: { width: 640, height: 480 },
+      durationMs: 12_000,
+    });
+    return { poker, baseline };
+  }
+
+  it("marks the offending feature with a readout when the face cracks", () => {
+    const { poker, baseline } = startPoker();
+    const landmarks = Array.from({ length: 478 }, () => ({ x: 320, y: 300 }));
+    landmarks[61] = { x: 280, y: 305 };
+    landmarks[291] = { x: 360, y: 305 };
+    landmarks[0] = { x: 320, y: 295 };
+    landmarks[17] = { x: 320, y: 320 };
+
+    for (let t = 0; t < 600 && poker.getResult().status === "running"; t += 50) {
+      poker.update(
+        50,
+        makeFaceSignal(
+          { shapes: { ...baseline.shapes, mouthSmileLeft: 0.6, mouthSmileRight: 0.6 }, landmarks },
+          baseline,
+        ),
+      );
+    }
+
+    const res = poker.getResult();
+    expect(res.status).toBe("failed");
+    expect(res.evidence).toBeDefined();
+    expect(res.evidence!.label).toMatch(/^Smile 0\.\d\d \/ limit 0\.16$/);
+    // Rect hugs the mouth, not the whole frame
+    expect(res.evidence!.rect.w).toBeGreaterThan(60);
+    expect(res.evidence!.rect.w).toBeLessThan(200);
+    expect(res.evidence!.rect.y).toBeGreaterThan(250);
+  });
+
+  it("types case notes for sub-threshold movement and stays quiet when composed", () => {
+    const quiet = startPoker();
+    const quietDraw = makeSpyCanvasContext();
+    for (let t = 0; t < 2_000; t += 50) {
+      quiet.poker.update(50, makeFaceSignal({}, quiet.baseline));
+    }
+    quiet.poker.draw(quietDraw.ctx, { width: 640, height: 480 });
+    expect(quietDraw.texts.some((txt) => /^\[\d\d\.\d\]/.test(txt))).toBe(false);
+
+    const twitchy = startPoker();
+    // A blink (below fail threshold) after a short composed stretch
+    for (let t = 0; t < 400; t += 50) {
+      twitchy.poker.update(50, makeFaceSignal({}, twitchy.baseline));
+    }
+    twitchy.poker.update(
+      50,
+      makeFaceSignal(
+        { shapes: { ...twitchy.baseline.shapes, eyeBlinkLeft: 0.9, eyeBlinkRight: 0.9 } },
+        twitchy.baseline,
+      ),
+    );
+    const twitchyDraw = makeSpyCanvasContext();
+    twitchy.poker.draw(twitchyDraw.ctx, { width: 640, height: 480 });
+    expect(twitchyDraw.texts.some((txt) => /^\[\d\d\.\d\] Blink/.test(txt))).toBe(true);
+    expect(twitchy.poker.getResult().status).toBe("running");
+  });
+
+  it("reveals taunts with a typewriter instead of all at once", () => {
+    const { poker, baseline } = startPoker();
+    poker.update(50, makeFaceSignal({}, baseline));
+    const early = makeSpyCanvasContext();
+    poker.draw(early.ctx, { width: 640, height: 480 });
+
+    for (let t = 0; t < 1_000; t += 50) {
+      poker.update(50, makeFaceSignal({}, baseline));
+    }
+    const later = makeSpyCanvasContext();
+    poker.draw(later.ctx, { width: 640, height: 480 });
+
+    const longest = (texts: string[]) =>
+      Math.max(0, ...texts.filter((txt) => !/^\[/.test(txt) && !/s$/.test(txt)).map((txt) => txt.length));
+    expect(longest(later.texts)).toBeGreaterThan(longest(early.texts));
+  });
+});

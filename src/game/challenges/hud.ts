@@ -33,3 +33,29 @@ export function drawWrappedText(
     ctx.fillText(visible[i]!, x, startY + i * lineHeight, maxWidth);
   }
 }
+
+/**
+ * Splits text into lines that fit `maxWidth` using the context's current font.
+ * Lines beyond `maxLines` are dropped.
+ */
+export function wrapLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines = 3,
+): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const probe = current ? `${current} ${word}` : word;
+    if (ctx.measureText(probe).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = probe;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.slice(0, maxLines);
+}

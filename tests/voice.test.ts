@@ -9,7 +9,7 @@ import { MOUTH_CATCH_COPY } from "../src/copy/mouth-catch";
 import { NOSE_CURSOR_COPY } from "../src/copy/nose-cursor";
 import { NOSE_SPOON_COPY } from "../src/copy/nose-spoon";
 import { PASSPORT_PHOTO_COPY } from "../src/copy/passport-photo";
-import { POKER_FACE_COPY } from "../src/copy/poker-face";
+import { POKER_FACE_COPY, POKER_FACE_NOTES } from "../src/copy/poker-face";
 import { CHALLENGES } from "../src/game/registry";
 
 const BANNED_PATTERN = /\b(oops|uh-oh|nice try|awesome|epic|level up|gamify)\b/i;
@@ -33,6 +33,7 @@ function gatherAllStrings(): string[] {
     UI_COPY.colleagueBanner(31),
     UI_COPY.nextCaseCountdown("04:12:09"),
     UI_COPY.newCaseReady("02"),
+    ...Object.values(POKER_FACE_NOTES).flat(),
     ...(POKER_FACE_COPY.taunts ?? []),
     ...POKER_FACE_COPY.callouts,
     ...(NOSE_SPOON_COPY.commentary ?? []),
