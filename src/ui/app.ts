@@ -295,6 +295,7 @@ export function bootApp(): void {
   function cleanupSession(): void {
     sessionToken += 1;
     inspectionStarting = false;
+    sfx.stopAmbientHum();
     stopCountdownTicker();
     if (stallTimer) {
       window.clearInterval(stallTimer);
@@ -331,6 +332,7 @@ export function bootApp(): void {
   }
 
   async function showFailurePanel(kind: "camera" | "engine", showWebViewHint: boolean): Promise<void> {
+    sfx.stopAmbientHum();
     noFleshTitle.textContent = kind === "camera" ? UI_COPY.noFleshTitle : UI_COPY.engineErrorTitle;
     noFleshBody.textContent = kind === "camera" ? UI_COPY.noFleshBody : UI_COPY.engineErrorBody;
     webviewNote.hidden = !showWebViewHint;
@@ -402,6 +404,7 @@ export function bootApp(): void {
 
     stageStatusNote.textContent = "Hold neutral during calibration.";
     sfx.playCalibrateHum();
+    sfx.startAmbientHum();
 
     activeLoop = new GameLoop(
       stageCanvas,
@@ -416,6 +419,8 @@ export function bootApp(): void {
             stageStatusNote.textContent = manifest.prompt;
           } else if (phase === "PAUSED") {
             stageStatusNote.textContent = "Subject lost. Return to frame.";
+          } else if (phase === "VERDICT") {
+            sfx.stopAmbientHum();
           }
         },
         onRoundActive(canvas) {
@@ -431,6 +436,7 @@ export function bootApp(): void {
         playPassChime: () => sfx.playPassChime(),
         playRoundAdvance: () => sfx.playRoundAdvance(),
         playMilestone: () => sfx.playMilestone(),
+        playTypeClack: () => sfx.playTypeClack(),
       },
       reducedMotion,
       { caseLabel: `CASE #${dayStr}` },
@@ -512,6 +518,7 @@ export function bootApp(): void {
     }
 
     // Stop active loop & camera immediately after grabbing clipPromise
+    sfx.stopAmbientHum();
     if (activeLoop) {
       activeLoop.stop();
       activeLoop.releaseSnapshot();
@@ -523,6 +530,7 @@ export function bootApp(): void {
     checkbox.checked = false;
     setLaunchControlsDisabled(false);
 
+    sfx.playPaperRustle();
     showVerdictPanel(true);
 
     const clip = await clipPromise;

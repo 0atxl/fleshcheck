@@ -211,10 +211,12 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
     const count = Math.max(1, this.subManifests.length);
     let progressSum = this.roundProgresses.reduce((acc, v) => acc + v, 0);
     let milestones = this.completedMilestones;
+    let typed: number | undefined;
     if (this.status === "running" && this.activeChallenge && this.intermissionMs === 0) {
       const activeRes = this.activeChallenge.getResult();
       progressSum += activeRes.progress;
       milestones += activeRes.milestones ?? 0;
+      typed = activeRes.typed;
     }
     const progress =
       this.status === "passed" ? 1 : Math.min(0.99, progressSum / count);
@@ -223,6 +225,7 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
       status: this.status,
       progress,
       milestones,
+      ...(typed !== undefined ? { typed } : {}),
       roundRecords: [...this.roundRecords],
     };
     if (this.status === "failed" && this.firstFailCallout) {

@@ -89,6 +89,8 @@ export interface ChallengeResult {
   callout?: string;
   evidence?: EvidenceMark;
   milestones?: number;
+  /** Cumulative typewriter characters revealed so far; used by GameLoop for clack audio. */
+  typed?: number;
   roundRecords?: TryRecord[];
 }
 

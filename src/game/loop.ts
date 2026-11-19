@@ -122,6 +122,7 @@ export interface LoopCallbacks {
   playPassChime?(): void;
   playRoundAdvance?(): void;
   playMilestone?(): void;
+  playTypeClack?(): void;
 }
 
 export interface GameLoopOptions {
@@ -171,6 +172,8 @@ export class GameLoop {
   private hasSubFailSnapshot = false;
   private seenSubRounds = 0;
   private seenMilestones = 0;
+  private lastClackTyped = 0;
+  private lastClackActiveMs = -Infinity;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -200,6 +203,8 @@ export class GameLoop {
     this.hasSubFailSnapshot = false;
     this.seenSubRounds = 0;
     this.seenMilestones = 0;
+    this.lastClackTyped = 0;
+    this.lastClackActiveMs = -Infinity;
     this.activeFramesRecorded = 0;
     this.qualityMonitor.reset();
     this.calibration = new CalibrationCollector(CALIBRATION_MS);
@@ -376,6 +381,19 @@ export class GameLoop {
             this.seenMilestones = res.milestones;
             if (res.status === "running" && !advancedSubRound) {
               this.callbacks.playMilestone?.();
+            }
+          }
+
+          if (res.typed !== undefined && res.status === "running") {
+            if (res.typed < this.lastClackTyped) {
+              this.lastClackTyped = res.typed;
+            } else if (
+              res.typed - this.lastClackTyped >= 3 &&
+              this.activeElapsedMs - this.lastClackActiveMs >= 60
+            ) {
+              this.lastClackTyped = res.typed;
+              this.lastClackActiveMs = this.activeElapsedMs;
+              this.callbacks.playTypeClack?.();
             }
           }
 

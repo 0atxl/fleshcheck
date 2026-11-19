@@ -11,3 +11,12 @@
 - Added `probeSaturationComposite()` in `src/game/loop.ts` so browsers where `globalCompositeOperation = "saturation"` fails to desaturate (e.g. iOS Safari quirks) automatically fall back to a plain semi-transparent grey overlay without using `ctx.filter`.
 - Added unit tests for both helpers in `tests/loop.test.ts`.
 
+## Part B: Feature passes
+
+### B1. Sound pass
+- Replaced and expanded procedural WebAudio SFX in `src/lib/sfx.ts` with filtered-noise + low sine drop (`92 Hz -> 45 Hz`) stamp thud, filtered-noise paper rustle on verdict reveal, rate-capped filtered-noise typewriter clacks, and a quiet fluorescent-style ambient hum faded in/out under calibration and active rounds.
+- Added `typed?: number` to `ChallengeResult` and `playTypeClack` to `LoopCallbacks`, driving typewriter clacks every 3 revealed characters with rate capping.
+- Ensured ambient hum respects live mute toggles and stops cleanly on verdict, abort, error, dev-switch, and pagehide, with full WebAudio node disconnection via `onended`.
+- Added unit tests in `tests/sfx.test.ts` and `tests/loop.test.ts`.
+
+

@@ -451,4 +451,61 @@ describe("GameLoop integration", () => {
     } as unknown as Document;
     expect(probeSaturationComposite()).toBe(false);
   });
+
+  it("fires playTypeClack as PokerFace types out taunts at a capped rate", () => {
+    const harness = installLoopHarness();
+    const stageCanvas = makeFakeCanvas() as unknown as HTMLCanvasElement;
+    const video = { readyState: 4, videoWidth: 640, videoHeight: 480 } as unknown as HTMLVideoElement;
+    const landmarker = {
+      detectForVideo: () => makeFaceResult(0.02),
+    } as unknown as FaceLandmarker;
+
+    const pokerManifest: ChallengeManifest = {
+      id: "POKER_FACE",
+      title: "Poker Face",
+      department: "Affect Review",
+      prompt: "Hold neutral.",
+      model: "face",
+      durationMs: 12_000,
+      hideWireframe: true,
+      enabled: true,
+      copy: POKER_FACE_COPY,
+      create: () => new PokerFaceChallenge(),
+    };
+
+    let clacks = 0;
+    const loop = new GameLoop(
+      stageCanvas,
+      video,
+      new FaceTracker(landmarker),
+      pokerManifest,
+      1,
+      {
+        onPhaseChange() {},
+        onVerdict() {},
+        playTypeClack() {
+          clacks += 1;
+        },
+      },
+      true,
+    );
+
+    loop.start();
+    let now = performance.now();
+    // Still calibrating at 1450 ms -> zero clacks
+    for (let i = 0; i < 29; i++) {
+      now += 50;
+      harness.step(now);
+    }
+    expect(clacks).toBe(0);
+
+    // Finish calibration + run 1500 ms of active typing
+    for (let i = 0; i < 33; i++) {
+      now += 50;
+      harness.step(now);
+    }
+    expect(clacks).toBeGreaterThanOrEqual(5);
+    expect(clacks).toBeLessThanOrEqual(25);
+    loop.stop();
+  });
 });

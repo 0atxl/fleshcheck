@@ -78,6 +78,7 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
 
   private hangingStamp: HTMLCanvasElement | null = null;
   private stampTried = false;
+  private typedChars = 0;
 
   init(ctx: ChallengeContext): void {
     this.elapsedMs = 0;
@@ -101,6 +102,7 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
     this.lastNoteMs = -Infinity;
     this.hangingStamp = null;
     this.stampTried = false;
+    this.typedChars = 0;
 
     const rng = mulberry32(ctx.seed);
     const sourceTaunts = ctx.copy.taunts ?? ["Maintain a neutral face for the record."];
@@ -129,6 +131,7 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
 
     const clampedDt = Math.min(80, Math.max(1, dtMs));
     this.elapsedMs += clampedDt;
+    this.updateTypedChars();
 
     this.lastLandmarks = signal.landmarks;
     this.faceBox = signal.faceBox;
@@ -217,17 +220,32 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
     return {
       status: this.status,
       progress,
+      typed: this.typedChars,
       ...(this.callout !== undefined ? { callout: this.callout } : {}),
       ...(this.evidence !== undefined ? { evidence: this.evidence } : {}),
     };
   }
 
-  private currentTaunt(): { text: string; sinceMs: number } {
+  private updateTypedChars(): void {
+    const { idx, text, sinceMs } = this.currentTaunt();
+    if (!text) return;
+    let prior = 0;
+    for (let i = 0; i < idx; i++) {
+      prior += this.activeTaunts[i]?.length ?? 0;
+    }
+    const shown = Math.min(text.length, Math.max(0, Math.floor((sinceMs / 1000) * TYPE_CHARS_PER_SEC)));
+    const next = prior + shown;
+    if (next > this.typedChars) {
+      this.typedChars = next;
+    }
+  }
+
+  private currentTaunt(): { idx: number; text: string; sinceMs: number } {
     const n = this.activeTaunts.length;
-    if (n === 0) return { text: "", sinceMs: 0 };
+    if (n === 0) return { idx: 0, text: "", sinceMs: 0 };
     const slot = this.durationMs / n;
     const idx = Math.min(n - 1, Math.floor(this.elapsedMs / slot));
-    return { text: this.activeTaunts[idx] ?? "", sinceMs: this.elapsedMs - idx * slot };
+    return { idx, text: this.activeTaunts[idx] ?? "", sinceMs: this.elapsedMs - idx * slot };
   }
 
   private drawTaunt(ctx: CanvasRenderingContext2D, vp: Viewport, compact: boolean): void {
