@@ -91,6 +91,7 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
       copy: manifest.copy,
       viewport: this.baseCtx.viewport,
       durationMs: this.roundDurationMs,
+      ...(this.baseCtx.copyContext ? { copyContext: this.baseCtx.copyContext } : {}),
     });
     this.activeChallenge = ch;
   }

@@ -1,4 +1,5 @@
 import { CALIBRATION_MS, MAX_PAUSES_PER_TRY } from "../config";
+import type { CopyTemplateContext } from "../copy/template";
 import { drawEvidenceAnnotation } from "../output/annotation";
 import { blitStamp, createStampBitmap, pickStampText, stampColor } from "../output/stamp";
 import { CalibrationCollector } from "../vision/calibration";
@@ -128,6 +129,8 @@ export interface LoopCallbacks {
 export interface GameLoopOptions {
   /** Burned into the corner of the camera feed, e.g. "CASE #12". */
   caseLabel?: string;
+  /** Local-only copy personalization context (case file + device clock). */
+  copyContext?: CopyTemplateContext;
 }
 
 interface SlamState {
@@ -327,6 +330,7 @@ export class GameLoop {
           copy: this.manifest.copy,
           viewport: vp,
           durationMs: this.manifest.durationMs,
+          ...(this.options.copyContext ? { copyContext: this.options.copyContext } : {}),
         });
         this.setPhase("ACTIVE");
         this.callbacks.onRoundActive?.(this.canvas);

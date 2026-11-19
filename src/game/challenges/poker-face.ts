@@ -1,4 +1,5 @@
 import { POKER_FACE_NOTES } from "../../copy/poker-face";
+import { renderCopy } from "../../copy/template";
 import {
   blitStamp,
   createStampBitmap,
@@ -107,17 +108,23 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
     const rng = mulberry32(ctx.seed);
     const sourceTaunts = ctx.copy.taunts ?? ["Maintain a neutral face for the record."];
     const third = Math.max(1, Math.floor(sourceTaunts.length / 3));
-    const tier1 = shuffleWithRng(sourceTaunts.slice(0, third), rng);
-    const tier2 = shuffleWithRng(sourceTaunts.slice(third, third * 2), rng);
-    const tier3 = shuffleWithRng(sourceTaunts.slice(third * 2), rng);
+    const resolveTier = (slice: readonly string[]): string[] =>
+      slice
+        .map((line) => renderCopy(line, ctx.copyContext))
+        .filter((line): line is string => line !== null);
+
+    const fallbackLine = "Maintain a neutral face for the record.";
+    const tier1 = shuffleWithRng(resolveTier(sourceTaunts.slice(0, third)), rng);
+    const tier2 = shuffleWithRng(resolveTier(sourceTaunts.slice(third, third * 2)), rng);
+    const tier3 = shuffleWithRng(resolveTier(sourceTaunts.slice(third * 2)), rng);
 
     const fullList = [
-      tier1[0] ?? sourceTaunts[0]!,
-      tier1[1] ?? tier1[0] ?? sourceTaunts[0]!,
-      tier2[0] ?? sourceTaunts[0]!,
-      tier2[1] ?? tier2[0] ?? sourceTaunts[0]!,
-      tier3[0] ?? sourceTaunts[0]!,
-      tier3[1] ?? tier3[0] ?? sourceTaunts[0]!,
+      tier1[0] ?? fallbackLine,
+      tier1[1] ?? tier1[0] ?? fallbackLine,
+      tier2[0] ?? tier1[0] ?? fallbackLine,
+      tier2[1] ?? tier2[0] ?? fallbackLine,
+      tier3[0] ?? tier2[0] ?? fallbackLine,
+      tier3[1] ?? tier3[0] ?? fallbackLine,
     ];
     this.activeTaunts = this.durationMs <= 5_000 ? [fullList[2]!, fullList[4]!] : fullList;
 

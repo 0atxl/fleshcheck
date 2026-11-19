@@ -1,3 +1,4 @@
+import type { CopyTemplateContext } from "../copy/template";
 import type { BlendshapeMap } from "../vision/blendshapes";
 
 export type ChallengeId =
@@ -100,6 +101,7 @@ export interface ChallengeContext {
   copy: CopyBank;
   viewport: Viewport;
   durationMs: number;
+  copyContext?: CopyTemplateContext;
 }
 
 export interface Challenge<S = FaceSignal> {

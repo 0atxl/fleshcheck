@@ -1,6 +1,7 @@
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { MAX_TRIES_PER_DAY, PREFETCH_DWELL_MS } from "../config";
 import { STALLING_LINES, UI_COPY } from "../copy/global";
+import { buildCopyContext } from "../copy/template";
 import { CaseFileStore } from "../game/case-file";
 import {
   formatUtcCountdown,
@@ -406,6 +407,19 @@ export function bootApp(): void {
     sfx.playCalibrateHum();
     sfx.startAmbientHum();
 
+    const totalTries = store.getTotalTries();
+    const lastResult = store.getLastResult();
+    const copyContext = buildCopyContext({
+      caseNumber: activeDay,
+      ...(totalTries > 0
+        ? {
+            streak: store.getEffectiveStreak(todayDay),
+            tries: totalTries,
+            ...(lastResult !== undefined ? { lastResult } : {}),
+          }
+        : {}),
+    });
+
     activeLoop = new GameLoop(
       stageCanvas,
       activeVideo,
@@ -439,7 +453,7 @@ export function bootApp(): void {
         playTypeClack: () => sfx.playTypeClack(),
       },
       reducedMotion,
-      { caseLabel: `CASE #${dayStr}` },
+      { caseLabel: `CASE #${dayStr}`, copyContext },
     );
     activeLoop.start();
   }

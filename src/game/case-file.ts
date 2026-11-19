@@ -8,9 +8,12 @@ export interface DepartmentStats {
   bestPct: number;
 }
 
+export type LastResultLabel = "cleared" | "rejected" | "absent";
+
 export interface CaseFileData {
   streak: number;
   lastDay: number;
+  lastResult?: LastResultLabel;
   today: {
     day: number;
     tries: TryRecord[];
@@ -71,6 +74,16 @@ function sanitizeTryArray(arr: unknown, maxLen: number): TryRecord[] {
   return out;
 }
 
+function sanitizeLastResult(val: unknown): LastResultLabel | undefined {
+  if (val === "cleared" || val === "rejected" || val === "absent") return val;
+  return undefined;
+}
+
+function deriveResultLabel(record: TryRecord): LastResultLabel {
+  if (record.passed) return "cleared";
+  return record.pct < 40 ? "absent" : "rejected";
+}
+
 function sanitizeDepartments(
   raw: unknown,
 ): Partial<Record<ChallengeId, DepartmentStats>> {
@@ -107,6 +120,7 @@ export class CaseFileStore {
       if (!raw) return emptyData();
       const parsed = JSON.parse(raw) as Partial<CaseFileData>;
       const displaySquares = sanitizeTryArray(parsed.today?.displaySquares, MAX_DISPLAY_SQUARES);
+      const lastResult = sanitizeLastResult(parsed.lastResult);
       return {
         streak:
           typeof parsed.streak === "number" && Number.isFinite(parsed.streak) && parsed.streak >= 0
@@ -116,6 +130,7 @@ export class CaseFileStore {
           typeof parsed.lastDay === "number" && Number.isFinite(parsed.lastDay) && parsed.lastDay >= 0
             ? Math.floor(parsed.lastDay)
             : 0,
+        ...(lastResult ? { lastResult } : {}),
         today: {
           day:
             typeof parsed.today?.day === "number" && Number.isFinite(parsed.today.day)
@@ -207,6 +222,21 @@ export class CaseFileStore {
     return total;
   }
 
+  getLastResult(): LastResultLabel | undefined {
+    if (this.memoryState.lastResult) return this.memoryState.lastResult;
+    const tries = this.memoryState.today.tries;
+    if (tries.length > 0) {
+      return deriveResultLabel(tries[tries.length - 1]!);
+    }
+    if (this.getTotalTries() > 0) {
+      for (const stats of Object.values(this.memoryState.departments)) {
+        if (stats && stats.passes > 0) return "cleared";
+      }
+      return "rejected";
+    }
+    return undefined;
+  }
+
   /**
    * Records a try at verdict time.
    * Replay runs (?day=) never mutate today's 3-try budget or daily streak.
@@ -222,6 +252,7 @@ export class CaseFileStore {
     const next: CaseFileData = {
       streak: this.memoryState.streak,
       lastDay: this.memoryState.lastDay,
+      lastResult: deriveResultLabel(record),
       today: {
         day: this.memoryState.today.day,
         tries: [...this.memoryState.today.tries],

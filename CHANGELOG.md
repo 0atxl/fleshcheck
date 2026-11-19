@@ -19,4 +19,11 @@
 - Ensured ambient hum respects live mute toggles and stops cleanly on verdict, abort, error, dev-switch, and pagehide, with full WebAudio node disconnection via `onended`.
 - Added unit tests in `tests/sfx.test.ts` and `tests/loop.test.ts`.
 
+### B2. Personalized copy
+- Added `src/copy/template.ts` with pure `renderCopy(line, ctx)` and `buildCopyContext()` supporting `{weekday}`, `{time}`, `{streak}`, `{tries}`, `{lastResult}`, and `{case}` using only local case-file storage and the device clock, dropping lines cleanly when data is missing.
+- Added 12 templated taunts across all three escalation tiers in `src/copy/poker-face.ts` (12 of 48 taunts = 25%).
+- Persisted `lastResult` in `CaseFileStore` and passed local `copyContext` through `GameLoop` into challenges.
+- Added unit tests in `tests/template.test.ts` and extended `tests/voice.test.ts` to render and lint every templated line across multiple contexts.
+
+
 

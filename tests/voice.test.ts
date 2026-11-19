@@ -10,10 +10,12 @@ import { NOSE_CURSOR_COPY } from "../src/copy/nose-cursor";
 import { NOSE_SPOON_COPY } from "../src/copy/nose-spoon";
 import { PASSPORT_PHOTO_COPY } from "../src/copy/passport-photo";
 import { POKER_FACE_COPY, POKER_FACE_NOTES } from "../src/copy/poker-face";
+import { hasTemplateTokens, renderCopy, type CopyTemplateContext } from "../src/copy/template";
 import { CHALLENGES } from "../src/game/registry";
 
 const BANNED_PATTERN = /\b(oops|uh-oh|nice try|awesome|epic|level up|gamify)\b/i;
 const DEV_JARGON_PATTERN = /\b(commit|git|wip|pull request|deploy|localhost|regex)\b/i;
+const RAW_TOKEN_PATTERN = /\{[^}]*\}/;
 
 function gatherAllStrings(): string[] {
   const strings: string[] = [
@@ -67,6 +69,44 @@ describe("voice bible enforcement", () => {
       expect(line, `Exclamation mark found in: "${line}"`).not.toContain("!");
       expect(line, `Banned word found in: "${line}"`).not.toMatch(BANNED_PATTERN);
       expect(line, `Developer jargon found in: "${line}"`).not.toMatch(DEV_JARGON_PATTERN);
+    }
+  });
+
+  it("renders every templated Poker Face taunt cleanly across player contexts without leaking tokens", () => {
+    const taunts = POKER_FACE_COPY.taunts ?? [];
+    const templated = taunts.filter(hasTemplateTokens);
+    expect(templated.length).toBeGreaterThanOrEqual(8);
+    expect(templated.length / taunts.length).toBeGreaterThanOrEqual(0.2);
+    expect(templated.length / taunts.length).toBeLessThanOrEqual(0.35);
+
+    const contexts: CopyTemplateContext[] = [
+      // No history at all
+      { weekday: "Monday", time: "08:15", case: "#01" },
+      // Streak 0, failed recently
+      { weekday: "Wednesday", time: "14:40", case: "#04", streak: 0, tries: 1, lastResult: "absent" },
+      // Streak 9, cleared previously
+      { weekday: "Friday", time: "23:05", case: "#19", streak: 9, tries: 14, lastResult: "cleared" },
+      // Weekend late night, rejected
+      { weekday: "Sunday", time: "02:30", case: "#07", streak: 2, tries: 5, lastResult: "rejected" },
+      // Empty context (every templated line must gracefully drop)
+      {},
+    ];
+
+    for (const line of templated) {
+      // Empty context must drop cleanly, never print a raw token
+      expect(renderCopy(line, {})).toBeNull();
+
+      let renderedAtLeastOnce = false;
+      for (const ctx of contexts) {
+        const rendered = renderCopy(line, ctx);
+        if (rendered === null) continue;
+        renderedAtLeastOnce = true;
+        expect(rendered, `Raw token leaked in: "${rendered}"`).not.toMatch(RAW_TOKEN_PATTERN);
+        expect(rendered, `Exclamation mark found in: "${rendered}"`).not.toContain("!");
+        expect(rendered, `Banned word found in: "${rendered}"`).not.toMatch(BANNED_PATTERN);
+        expect(rendered, `Developer jargon found in: "${rendered}"`).not.toMatch(DEV_JARGON_PATTERN);
+      }
+      expect(renderedAtLeastOnce, `Template never rendered under any context: "${line}"`).toBe(true);
     }
   });
 });
