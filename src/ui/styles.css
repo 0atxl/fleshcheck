@@ -231,6 +231,46 @@ body {
   }
 }
 
+/* ---------- Shared-element View Transition: checkbox -> camera ---------- */
+
+html[data-vt-active] .panel {
+  transition: none !important;
+}
+
+html[data-vt-active] .panel:not([hidden]) {
+  opacity: 1;
+  translate: 0;
+}
+
+::view-transition-group(booth-portal) {
+  animation-duration: 340ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(booth-portal),
+::view-transition-new(booth-portal) {
+  height: 100%;
+  overflow: clip;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* Inline loading status below the checked box while camera & WASM initialize */
+body[data-loading-inline="true"] .loading-box {
+  padding: 1rem 0 0.25rem;
+}
+
+body[data-loading-inline="true"] .daily-meta-row,
+body[data-loading-inline="true"] .privacy-hint {
+  display: none;
+}
+
 /* ---------- The declaration (the checkbox is the centrepiece) ---------- */
 
 .declaration-heading {

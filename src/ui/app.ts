@@ -30,7 +30,12 @@ import { requestCamera, stopCamera } from "../vision/camera";
 import { createFaceLandmarker, prefetchFaceAssets } from "../vision/loader";
 import { FaceTracker } from "../vision/tracker";
 import { mountDevSwitcher } from "./dev-switcher";
-import { hidePanel, showPanel } from "./transitions";
+import {
+  hidePanel,
+  runSharedElementTransition,
+  showPanel,
+  skipActiveViewTransition,
+} from "./transitions";
 
 const MAX_SANDBOX_DISPLAY_TRIES = 6;
 
@@ -165,8 +170,53 @@ export function bootApp(): void {
   // Canvas text only uses webfonts once loaded; start early so the HUD never falls back.
   void ensureFonts();
 
-  async function switchPanel(target: HTMLElement, focusEl?: HTMLElement | null): Promise<void> {
+  interface SwitchPanelOptions {
+    morphFrom?: HTMLElement | null;
+    morphTo?: HTMLElement | null;
+  }
+
+  function prefersReducedMotion(): boolean {
+    return typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  async function switchPanel(
+    target: HTMLElement,
+    focusEl?: HTMLElement | null,
+    opts?: SwitchPanelOptions,
+  ): Promise<void> {
     const myPanelToken = ++panelToken;
+    const applyImmediateSwitch = () => {
+      delete document.body.dataset.loadingInline;
+      for (const p of panels) {
+        if (p !== target) {
+          p.removeAttribute("data-closing");
+          p.hidden = true;
+        }
+      }
+      document.body.dataset.view = target.id.replace("panel-", "");
+      showPanel(target);
+    };
+
+    if (opts?.morphFrom && opts?.morphTo) {
+      const usedVt = await runSharedElementTransition({
+        fromEl: opts.morphFrom,
+        toEl: opts.morphTo,
+        transitionName: "booth-portal",
+        reducedMotion: prefersReducedMotion(),
+        updateDom: applyImmediateSwitch,
+        onFinished: () => {
+          if (myPanelToken === panelToken && focusEl && !focusEl.hidden) {
+            focusEl.focus({ preventScroll: true });
+          }
+        },
+      });
+      if (usedVt) return;
+    }
+
+    skipActiveViewTransition();
+    delete document.body.dataset.loadingInline;
     await Promise.all(panels.filter((p) => p !== target).map((p) => hidePanel(p)));
     if (myPanelToken !== panelToken) return;
     document.body.dataset.view = target.id.replace("panel-", "");
@@ -296,6 +346,7 @@ export function bootApp(): void {
   function cleanupSession(): void {
     sessionToken += 1;
     inspectionStarting = false;
+    delete document.body.dataset.loadingInline;
     sfx.stopAmbientHum();
     stopCountdownTicker();
     if (stallTimer) {
@@ -344,6 +395,7 @@ export function bootApp(): void {
 
   async function startInspection(): Promise<void> {
     if (inspectionStarting) return;
+    const launchedFromIntro = !panelIntro.hidden;
     cleanupSession();
     const myToken = ++sessionToken;
     inspectionStarting = true;
@@ -352,8 +404,15 @@ export function bootApp(): void {
     sfx.playTick();
     setLaunchControlsDisabled(true);
 
-    await switchPanel(panelLoading);
-    if (myToken !== sessionToken) return;
+    if (launchedFromIntro) {
+      // Keep the checked checkbox visible during camera permission + WASM load so
+      // it can grow directly into the camera stage via View Transitions.
+      document.body.dataset.loadingInline = "true";
+      showPanel(panelLoading);
+    } else {
+      await switchPanel(panelLoading);
+      if (myToken !== sessionToken) return;
+    }
     startStallTicker();
 
     const videoEl = document.createElement("video");
@@ -396,11 +455,15 @@ export function bootApp(): void {
     sizeStageCanvas();
 
     const tracker = new FaceTracker(landmarkerResult.value);
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reducedMotion = prefersReducedMotion();
 
     await ensureFonts();
     if (myToken !== sessionToken) return;
-    await switchPanel(panelStage, abortBtn);
+    await switchPanel(
+      panelStage,
+      abortBtn,
+      launchedFromIntro ? { morphFrom: captchaWidget, morphTo: stageCanvas } : undefined,
+    );
     if (myToken !== sessionToken) return;
 
     stageStatusNote.textContent = "Hold neutral during calibration.";
@@ -664,11 +727,16 @@ export function bootApp(): void {
   });
 
   abortBtn.addEventListener("click", () => {
+    const leavingStage = !panelStage.hidden;
     cleanupSession();
     checkbox.checked = false;
     setLaunchControlsDisabled(false);
     updateIntroMeta();
-    void switchPanel(panelIntro, checkbox);
+    void switchPanel(
+      panelIntro,
+      checkbox,
+      leavingStage ? { morphFrom: stageCanvas, morphTo: captchaWidget } : undefined,
+    );
   });
 
   retryCameraBtn.addEventListener("click", () => {

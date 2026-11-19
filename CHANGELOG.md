@@ -37,6 +37,13 @@
 - Enabled `hideWireframe: true` across active face challenges in `src/game/registry.ts` so calibration keeps the wireframe while active rounds stay clean over the CCTV feed.
 - Added per-challenge failure evidence mark and HUD draw tests in `tests/challenges.test.ts`.
 
+### B5. Intro View Transition: checkbox grows into camera
+- Added `canUseViewTransition`, `runSharedElementTransition`, and `skipActiveViewTransition` in `src/ui/transitions.ts` using `document.startViewTransition` with a dynamically assigned unique `view-transition-name: booth-portal` handed off strictly between `#captcha-widget` and `#stage-canvas`.
+- Kept the checked checkbox visible alongside the inline typed loading status while camera permission and MediaPipe initialize, morphing directly into the camera stage on ready (and back on withdraw), while preserving `sessionToken` abort guards, focus routing after transition completion, reduced-motion / unsupported-browser fallbacks, and error handling on denied camera.
+- Added aspect-ratio clipping (`height: 100%; overflow: clip`) and reduced-motion rules for `::view-transition-*` in `src/ui/styles.css`.
+- Added unit tests in `tests/transitions.test.ts`.
+
+
 
 
 
