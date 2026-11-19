@@ -1,6 +1,16 @@
 import { mulberry32, shuffleWithRng } from "../prng";
-import type { Baseline, Challenge, ChallengeContext, ChallengeResult, FaceSignal, Viewport } from "../types";
-import { drawWrappedText } from "./hud";
+import { FONT_LABEL, THEME } from "../theme";
+import type {
+  Baseline,
+  Challenge,
+  ChallengeContext,
+  ChallengeResult,
+  EvidenceMark,
+  FaceSignal,
+  Rect2D,
+  Viewport,
+} from "../types";
+import { clampEvidenceRect, drawProgressLine, drawPromptStrip, drawTimerTag } from "./hud";
 
 const SETTLE_GRACE_MS = 250;
 const NEUTRAL_RETURN_BAND_RAD = 0.12;
@@ -28,7 +38,10 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
   private calloutPool: readonly string[] = ["VERBAL NON-COMPLIANCE"];
   private status: ChallengeResult["status"] = "running";
   private callout: string | undefined;
+  private evidence: EvidenceMark | undefined;
   private baseline!: Baseline;
+  private viewport: Viewport = { width: 640, height: 480 };
+  private lastFaceBox: Rect2D = { x: 0, y: 0, w: 0, h: 0 };
   private seed = 1;
 
   private needsNeutralReturn = false;
@@ -51,7 +64,10 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
     this.answeredCount = 0;
     this.status = "running";
     this.callout = undefined;
+    this.evidence = undefined;
     this.baseline = ctx.baseline;
+    this.viewport = { ...ctx.viewport };
+    this.lastFaceBox = { x: 0, y: 0, w: 0, h: 0 };
     this.seed = ctx.seed;
     this.notedBannerMs = 0;
     this.ackFlashMs = 0;
@@ -92,6 +108,7 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
     const clampedDt = Math.min(80, Math.max(1, dtMs));
     this.elapsedMs += clampedDt;
     this.slotElapsedMs += clampedDt;
+    this.lastFaceBox = signal.faceBox;
     if (this.notedBannerMs > 0) {
       this.notedBannerMs = Math.max(0, this.notedBannerMs - clampedDt);
     }
@@ -116,7 +133,7 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
           Math.abs(fromBasePitch) < NEUTRAL_RETURN_BAND_RAD &&
           Math.abs(fromBaseYaw) < NEUTRAL_RETURN_BAND_RAD;
         if (!nearNeutral && this.slotElapsedMs < NEUTRAL_REARM_MAX_MS) {
-          this.checkSlotTimeout();
+          this.checkSlotTimeout(q);
           return;
         }
         this.needsNeutralReturn = false;
@@ -149,6 +166,7 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
         if (q.answer !== "either" && detected !== q.answer) {
           this.status = "failed";
           this.callout = detected === "yes" ? "DECEPTIVE NODDING" : "INCRIMINATING HEAD SHAKE";
+          this.evidence = this.buildFaceEvidence(`Answered ${detected} / expected ${q.answer}`);
           return;
         }
         if (q.answer === "either") {
@@ -165,17 +183,35 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
       }
     }
 
-    this.checkSlotTimeout();
+    this.checkSlotTimeout(q);
   }
 
-  private checkSlotTimeout(): void {
+  private checkSlotTimeout(q: QuestionItem): void {
     if (this.slotElapsedMs >= this.slotDurationMs) {
       this.status = "failed";
       const rng = mulberry32(this.seed ^ Math.round(this.elapsedMs));
-      const timeoutCalls = this.calloutPool.filter((c) => c.includes("SILENCE") || c.includes("TIMED") || c.includes("HESITATION"));
+      const timeoutCalls = this.calloutPool.filter(
+        (c) => c.includes("SILENCE") || c.includes("TIMED") || c.includes("HESITATION"),
+      );
       const pool = timeoutCalls.length > 0 ? timeoutCalls : this.calloutPool;
       this.callout = pool[Math.floor(rng() * pool.length)] ?? "SILENCE FILED AS GUILT";
+      const expected = q.answer === "either" ? "yes or no" : q.answer;
+      this.evidence = this.buildFaceEvidence(`No answer / expected ${expected}`);
     }
+  }
+
+  private buildFaceEvidence(label: string): EvidenceMark {
+    const fallback: Rect2D = {
+      x: this.viewport.width * 0.28,
+      y: this.viewport.height * 0.2,
+      w: this.viewport.width * 0.44,
+      h: this.viewport.height * 0.5,
+    };
+    const rect = this.lastFaceBox.w > 0 && this.lastFaceBox.h > 0 ? this.lastFaceBox : fallback;
+    return {
+      rect: clampEvidenceRect(rect, this.viewport, 80, 90),
+      label,
+    };
   }
 
   private detectGesture(): "yes" | "no" | null {
@@ -193,61 +229,46 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
   }
 
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+    this.viewport = { ...vp };
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
     const q = this.getCurrentQuestion();
-    const slotRemaining = Math.max(0, (this.slotDurationMs - this.slotElapsedMs) / 1000).toFixed(1);
 
     ctx.save();
 
-    // Top HUD
-    ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
-    ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle =
-      this.status === "failed" ? "#C92A2A" : this.ackFlashMs > 0 ? "#51CF66" : "#E8590C";
-    ctx.fillRect(0, 40, vp.width * progress, 4);
-
-    ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#F6F7F4";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-    ctx.fillText(
-      `FORM 11-V · VERBAL COMPLIANCE (${this.answeredCount}/${this.questions.length})`,
-      16,
-      20,
-    );
-
-    ctx.textAlign = "right";
-    ctx.fillText(`${slotRemaining}s`, vp.width - 16, 20);
+    drawProgressLine(ctx, vp, progress, {
+      danger: this.status === "failed",
+      accent: this.ackFlashMs > 0 ? THEME.stampBlue : THEME.paper,
+    });
+    drawTimerTag(ctx, vp, Math.max(0, this.slotDurationMs - this.slotElapsedMs), {
+      counter: `${this.answeredCount}/${this.questions.length}`,
+    });
 
     if (this.notedBannerMs > 0) {
-      ctx.fillStyle = "#E8590C";
-      ctx.fillRect(vp.width / 2 - 110, 56, 220, 24);
-      ctx.fillStyle = "#1A1D1E";
-      ctx.font = "800 11px ui-monospace, SFMono-Regular, Menlo, monospace";
+      const chipW = 224;
+      ctx.fillStyle = THEME.paper;
+      ctx.fillRect(vp.width / 2 - chipW / 2, 54, chipW, 24);
+      ctx.strokeStyle = THEME.formBlue;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(vp.width / 2 - chipW / 2, 54, chipW, 24);
+      ctx.fillStyle = THEME.formBlue;
+      ctx.font = `700 12px ${FONT_LABEL}`;
       ctx.textAlign = "center";
-      ctx.fillText("ANSWER NOTED FOR THE FILE", vp.width / 2, 68);
+      ctx.textBaseline = "middle";
+      ctx.fillText("ANSWER NOTED FOR THE FILE", vp.width / 2, 67);
     }
 
     if (q) {
-      const margin = 16;
-      const boxW = vp.width - margin * 2;
-      const boxH = 88;
-      const boxY = vp.height - boxH - margin;
-
-      ctx.fillStyle = "rgba(26, 29, 30, 0.92)";
-      ctx.fillRect(margin, boxY, boxW, boxH);
-      ctx.strokeStyle = this.ackFlashMs > 0 ? "#51CF66" : "rgba(246, 247, 244, 0.25)";
-      ctx.lineWidth = this.ackFlashMs > 0 ? 2 : 1;
-      ctx.strokeRect(margin + 0.5, boxY + 0.5, boxW - 1, boxH - 1);
-
-      ctx.fillStyle = "#E8590C";
-      ctx.font = "700 10px ui-monospace, SFMono-Regular, Menlo, monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("NOD YES  ·  SHAKE NO", vp.width / 2, boxY + 18);
-
-      ctx.fillStyle = "#F6F7F4";
-      ctx.font = "600 16px system-ui, -apple-system, sans-serif";
-      drawWrappedText(ctx, q.text, vp.width / 2, boxY + 52, boxW - 28, 20, 3);
+      drawPromptStrip(ctx, vp, q.text, {
+        label: "NOD YES  ·  SHAKE NO",
+        labelColor: this.ackFlashMs > 0 ? THEME.stampBlue : THEME.formBlue,
+        borderAccent:
+          this.status === "failed"
+            ? THEME.stampRed
+            : this.ackFlashMs > 0
+              ? THEME.stampBlue
+              : THEME.ink,
+        maxLines: 3,
+      });
     }
 
     ctx.restore();
@@ -256,11 +277,13 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
   getResult(): ChallengeResult {
     const total = Math.max(1, this.questions.length);
     const progress = this.status === "passed" ? 1 : Math.min(0.99, this.answeredCount / total);
-    const res: ChallengeResult = { status: this.status, progress, milestones: this.answeredCount };
-    if (this.callout !== undefined) {
-      res.callout = this.callout;
-    }
-    return res;
+    return {
+      status: this.status,
+      progress,
+      milestones: this.answeredCount,
+      ...(this.callout !== undefined ? { callout: this.callout } : {}),
+      ...(this.evidence !== undefined ? { evidence: this.evidence } : {}),
+    };
   }
 }
 

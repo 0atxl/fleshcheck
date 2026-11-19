@@ -1,8 +1,18 @@
 import { mulberry32, shuffleWithRng } from "../prng";
-import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Point2D, Viewport } from "../types";
-import { drawWrappedText } from "./hud";
+import { FONT_LABEL, FONT_TYPE, THEME } from "../theme";
+import type {
+  Challenge,
+  ChallengeContext,
+  ChallengeResult,
+  EvidenceMark,
+  FaceSignal,
+  Point2D,
+  Viewport,
+} from "../types";
+import { clampEvidenceRect, drawProgressLine, drawPromptStrip, drawTimerTag } from "./hud";
 
 export const MAX_SPOON_ANGLE_RAD = (38 * Math.PI) / 180;
+const MAX_SPOON_ANGLE_DEG = 38;
 
 interface GustWindow {
   startMs: number;
@@ -46,6 +56,7 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
   private baselineEyeRoll: number | undefined;
   private baselinePoseRoll = 0;
   private anchor: Point2D = { x: 320, y: 240 };
+  private viewport: Viewport = { width: 640, height: 480 };
   private prevNoseX: number | null = null;
   private activeGustForce = 0;
   private gusts: GustWindow[] = [];
@@ -53,6 +64,7 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
   private calloutPool: readonly string[] = ["ASSET DROPPED"];
   private status: ChallengeResult["status"] = "running";
   private callout: string | undefined;
+  private evidence: EvidenceMark | undefined;
   private seed = 1;
 
   init(ctx: ChallengeContext): void {
@@ -61,9 +73,11 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     this.seed = ctx.seed;
     this.status = "running";
     this.callout = undefined;
+    this.evidence = undefined;
     this.baselineEyeRoll = ctx.baseline.eyeRollRad;
     this.baselinePoseRoll = ctx.baseline.rollRad;
     this.anchor = { ...ctx.baseline.nose };
+    this.viewport = { ...ctx.viewport };
     this.prevNoseX = null;
 
     const rng = mulberry32(ctx.seed);
@@ -142,6 +156,7 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
       this.status = "failed";
       const rng = mulberry32(this.seed ^ Math.round(this.elapsedMs));
       this.callout = this.calloutPool[Math.floor(rng() * this.calloutPool.length)] ?? "ASSET DROPPED";
+      this.evidence = this.buildEvidence();
       return;
     }
 
@@ -152,9 +167,11 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
   }
 
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+    this.viewport = { ...vp };
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
     const spoonLen = Math.min(vp.width, vp.height) * 0.34;
     const failed = this.status === "failed";
+    const norm = clamp(this.angle / MAX_SPOON_ANGLE_RAD, -1, 1);
 
     ctx.save();
 
@@ -164,7 +181,7 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     ctx.rotate(this.angle);
 
     // Handle shaft
-    ctx.strokeStyle = "#E4E7E4";
+    ctx.strokeStyle = THEME.paperLight;
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
     ctx.beginPath();
@@ -172,7 +189,7 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     ctx.lineTo(0, -spoonLen);
     ctx.stroke();
 
-    ctx.strokeStyle = "#1A1D1E";
+    ctx.strokeStyle = THEME.ink;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(-2.5, 0);
@@ -182,8 +199,8 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     ctx.stroke();
 
     // Spoon bowl
-    ctx.fillStyle = "#D4D8DA";
-    ctx.strokeStyle = "#1A1D1E";
+    ctx.fillStyle = THEME.paperDeep;
+    ctx.strokeStyle = THEME.ink;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.ellipse(0, -spoonLen - 8, 26, 10, 0, 0, Math.PI * 2);
@@ -193,88 +210,72 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     // Federal asset egg
     const eggOffsetX = failed ? Math.sign(this.angle || 1) * 34 : (this.angle / MAX_SPOON_ANGLE_RAD) * 8;
     const eggOffsetY = failed ? 14 : -19;
-    ctx.fillStyle = "#FFF7E6";
-    ctx.strokeStyle = "#1A1D1E";
+    ctx.fillStyle = THEME.paperLight;
+    ctx.strokeStyle = THEME.ink;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.ellipse(eggOffsetX, -spoonLen + eggOffsetY, 15, 19, failed ? this.angle * 0.7 : 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = "#C92A2A";
-    ctx.font = "700 7px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = THEME.stampRed;
+    ctx.font = `700 8px ${FONT_LABEL}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("ASSET", eggOffsetX, -spoonLen + eggOffsetY);
     ctx.restore();
 
     // Nose anchor pin
-    ctx.fillStyle = "#E8590C";
+    ctx.fillStyle = THEME.stampRed;
+    ctx.strokeStyle = THEME.paperLight;
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(this.anchor.x, this.anchor.y, 5, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
 
-    // Top HUD bar
-    ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
-    ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle = failed ? "#C92A2A" : "#E8590C";
-    ctx.fillRect(0, 40, vp.width * progress, 4);
+    // Unified HUD
+    drawProgressLine(ctx, vp, progress, { danger: failed || Math.abs(norm) > 0.72 });
+    drawTimerTag(ctx, vp, Math.max(0, this.durationMs - this.elapsedMs));
 
-    ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#F6F7F4";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-    ctx.fillText("FORM 44-A · ASSET HANDLING", 16, 20);
-
-    const remaining = Math.max(0, (this.durationMs - this.elapsedMs) / 1000).toFixed(1);
-    ctx.textAlign = "right";
-    ctx.fillText(`${remaining}s`, vp.width - 16, 20);
-
-    // Tilt meter & wind indicator
+    // Tilt meter under the burned-in CCTV clock on the top-left
     const deg = Math.round((this.angle * 180) / Math.PI);
-    const gaugeW = Math.min(180, vp.width * 0.36);
-    ctx.fillStyle = "rgba(26, 29, 30, 0.78)";
-    ctx.fillRect(16, 58, gaugeW, 42);
+    const gaugeW = Math.min(184, vp.width * 0.38);
+    ctx.fillStyle = THEME.paper;
+    ctx.fillRect(12, 46, gaugeW, 40);
+    ctx.fillStyle = THEME.ink;
+    ctx.fillRect(12, 84, gaugeW, 2);
 
-    const norm = clamp(this.angle / MAX_SPOON_ANGLE_RAD, -1, 1);
-    const markerX = 16 + gaugeW / 2 + norm * (gaugeW / 2 - 8);
-    ctx.fillStyle = "rgba(246, 247, 244, 0.25)";
-    ctx.fillRect(16 + gaugeW / 2 - 1, 61, 2, 18);
-    ctx.fillStyle = Math.abs(norm) > 0.72 ? "#C92A2A" : "#E8590C";
-    ctx.fillRect(markerX - 4, 61, 8, 18);
+    const markerX = 12 + gaugeW / 2 + norm * (gaugeW / 2 - 10);
+    ctx.fillStyle = "rgba(26, 26, 24, 0.25)";
+    ctx.fillRect(12 + gaugeW / 2 - 1, 51, 2, 14);
+    ctx.fillStyle = Math.abs(norm) > 0.72 ? THEME.stampRed : THEME.formBlue;
+    ctx.fillRect(markerX - 4, 51, 8, 14);
 
-    ctx.font = "600 10px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#F6F7F4";
+    ctx.font = `700 11px ${FONT_TYPE}`;
+    ctx.fillStyle = Math.abs(norm) > 0.72 ? THEME.stampRed : THEME.ink;
     ctx.textAlign = "left";
-    ctx.fillText(`TILT ${deg > 0 ? `+${deg}` : deg}° / ±38°`, 22, 90);
+    ctx.textBaseline = "middle";
+    ctx.fillText(`Tilt ${deg > 0 ? `+${deg}` : deg}° / ±${MAX_SPOON_ANGLE_DEG}°`, 18, 74);
 
     if (Math.abs(this.activeGustForce) > 0.2) {
       const windLabel = this.activeGustForce > 0 ? "CROSSWIND >>>" : "<<< CROSSWIND";
-      ctx.fillStyle = "#E8590C";
-      ctx.fillRect(vp.width - 148, 58, 132, 24);
-      ctx.fillStyle = "#1A1D1E";
-      ctx.font = "800 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.fillStyle = THEME.stampRed;
+      ctx.fillRect(vp.width - 144, 52, 132, 24);
+      ctx.fillStyle = THEME.paperLight;
+      ctx.font = `700 12px ${FONT_LABEL}`;
       ctx.textAlign = "center";
-      ctx.fillText(windLabel, vp.width - 82, 70);
+      ctx.fillText(windLabel, vp.width - 78, 65);
     }
 
-    // Commentary banner
+    // Commentary paper strip
     const lineIdx = Math.min(
       this.commentaryLines.length - 1,
       Math.floor(progress * this.commentaryLines.length),
     );
     const line = this.commentaryLines[lineIdx];
     if (line) {
-      const margin = 16;
-      const boxW = vp.width - margin * 2;
-      const boxH = 58;
-      const boxY = vp.height - boxH - margin;
-      ctx.fillStyle = "rgba(26, 29, 30, 0.86)";
-      ctx.fillRect(margin, boxY, boxW, boxH);
-      ctx.fillStyle = "#F6F7F4";
-      ctx.font = "500 14px system-ui, -apple-system, sans-serif";
-      ctx.textAlign = "center";
-      drawWrappedText(ctx, line, vp.width / 2, boxY + boxH / 2, boxW - 28, 18, 2);
+      drawPromptStrip(ctx, vp, line, { label: "FORM 44-A · ASSET HANDLING", maxLines: 2 });
     }
 
     ctx.restore();
@@ -282,10 +283,34 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
 
   getResult(): ChallengeResult {
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
-    if (this.callout !== undefined) {
-      return { status: this.status, progress, callout: this.callout };
-    }
-    return { status: this.status, progress };
+    return {
+      status: this.status,
+      progress,
+      ...(this.callout !== undefined ? { callout: this.callout } : {}),
+      ...(this.evidence !== undefined ? { evidence: this.evidence } : {}),
+    };
+  }
+
+  private buildEvidence(): EvidenceMark {
+    const spoonLen = Math.min(this.viewport.width, this.viewport.height) * 0.34;
+    const tipDist = spoonLen + 26;
+    const tipX = this.anchor.x + Math.sin(this.angle) * tipDist;
+    const tipY = this.anchor.y - Math.cos(this.angle) * tipDist;
+    const pad = 28;
+    const minX = Math.min(this.anchor.x, tipX) - pad;
+    const maxX = Math.max(this.anchor.x, tipX) + pad;
+    const minY = Math.min(this.anchor.y, tipY) - pad;
+    const maxY = Math.max(this.anchor.y, tipY) + pad;
+    const deg = Math.round((Math.abs(this.angle) * 180) / Math.PI);
+    return {
+      rect: clampEvidenceRect(
+        { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
+        this.viewport,
+        72,
+        72,
+      ),
+      label: `Spoon ${deg}° / limit ${MAX_SPOON_ANGLE_DEG}°`,
+    };
   }
 }
 

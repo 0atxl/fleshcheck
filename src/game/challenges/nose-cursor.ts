@@ -1,5 +1,15 @@
 import { mulberry32, shuffleWithRng } from "../prng";
-import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Point2D, Viewport } from "../types";
+import { FONT_LABEL, FONT_TYPE, THEME } from "../theme";
+import type {
+  Challenge,
+  ChallengeContext,
+  ChallengeResult,
+  EvidenceMark,
+  FaceSignal,
+  Point2D,
+  Viewport,
+} from "../types";
+import { clampEvidenceRect, drawProgressLine, drawTimerTag } from "./hud";
 
 const TARGET_DWELL_MS = 550;
 const TRAP_DWELL_MS = 320;
@@ -24,11 +34,13 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
   private durationMs = 12_000;
   private status: ChallengeResult["status"] = "running";
   private callout: string | undefined;
+  private evidence: EvidenceMark | undefined;
   private calloutPool: readonly string[] = ["TRAP CONSENT FILED"];
   private seed = 1;
 
   private boxes: CheckboxNode[] = [];
   private cursor: Point2D = { x: 320, y: 240 };
+  private viewport: Viewport = { width: 640, height: 480 };
   private nextOrder = 0;
   private tickFlashMs = 0;
   private targetCount = 3;
@@ -39,10 +51,12 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
     this.durationMs = Math.max(1_000, ctx.durationMs);
     this.status = "running";
     this.callout = undefined;
+    this.evidence = undefined;
     this.seed = ctx.seed;
     this.nextOrder = 0;
     this.tickFlashMs = 0;
     this.cursor = { ...ctx.baseline.nose };
+    this.viewport = { ...ctx.viewport };
 
     if (ctx.copy.callouts.length > 0) {
       this.calloutPool = ctx.copy.callouts;
@@ -144,6 +158,15 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
             const rng = mulberry32(this.seed ^ Math.round(this.elapsedMs));
             this.callout =
               this.calloutPool[Math.floor(rng() * this.calloutPool.length)] ?? "TRAP CONSENT FILED";
+            this.evidence = {
+              rect: clampEvidenceRect(
+                { x: box.x - 42, y: box.y - 26, w: 84, h: 72 },
+                this.viewport,
+                72,
+                60,
+              ),
+              label: `Trap: ${box.label}`,
+            };
             return;
           }
         } else {
@@ -171,27 +194,35 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
       this.elapsedMs = this.durationMs;
       this.status = "failed";
       this.callout = "INPUT DEVICE TIMEOUT";
+      const missing = this.boxes.find((b) => !b.trap && b.orderIndex === this.nextOrder);
+      const cx = missing ? missing.x : this.cursor.x;
+      const cy = missing ? missing.y : this.cursor.y;
+      this.evidence = {
+        rect: clampEvidenceRect({ x: cx - 42, y: cy - 26, w: 84, h: 72 }, this.viewport, 72, 60),
+        label: `Ticked ${this.nextOrder} / required ${this.targetCount}`,
+      };
     }
   }
 
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+    this.viewport = { ...vp };
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
     ctx.save();
 
-    // Draw checkboxes
+    // Draw form checkboxes
     for (const box of this.boxes) {
       const isNext = !box.trap && box.orderIndex === this.nextOrder;
-      const boxSize = 26;
+      const boxSize = 28;
       const half = boxSize / 2;
 
       ctx.fillStyle = box.checked
         ? box.trap
-          ? "#C92A2A"
-          : "#2B8A3E"
-        : "rgba(246, 247, 244, 0.92)";
+          ? THEME.stampRed
+          : THEME.stampBlue
+        : THEME.paperLight;
       ctx.fillRect(box.x - half, box.y - half, boxSize, boxSize);
 
-      ctx.strokeStyle = isNext ? "#E8590C" : "#1A1D1E";
+      ctx.strokeStyle = isNext ? THEME.formBlue : THEME.ink;
       ctx.lineWidth = isNext ? 3 : 2;
       ctx.strokeRect(box.x - half, box.y - half, boxSize, boxSize);
 
@@ -199,10 +230,10 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
       if (box.dwellMs > 0 && !box.checked) {
         const thresh = box.trap ? TRAP_DWELL_MS : TARGET_DWELL_MS;
         const frac = Math.min(1, box.dwellMs / thresh);
-        ctx.strokeStyle = box.trap ? "#C92A2A" : "#2B8A3E";
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = box.trap ? THEME.stampRed : THEME.stampBlue;
+        ctx.lineWidth = 3.5;
         ctx.beginPath();
-        ctx.arc(box.x, box.y, 21, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+        ctx.arc(box.x, box.y, 22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
         ctx.stroke();
       }
 
@@ -210,27 +241,32 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       if (box.checked) {
-        ctx.fillStyle = "#FFFFFF";
-        ctx.font = "800 15px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillStyle = THEME.paperLight;
+        ctx.font = `700 15px ${FONT_LABEL}`;
         ctx.fillText(box.trap ? "X" : "OK", box.x, box.y + 1);
       } else if (!box.trap) {
-        ctx.fillStyle = isNext ? "#E8590C" : "#1A1D1E";
-        ctx.font = "800 13px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillStyle = isNext ? THEME.formBlue : THEME.ink;
+        ctx.font = `700 15px ${FONT_LABEL}`;
         ctx.fillText(String(box.orderIndex + 1), box.x, box.y + 1);
       }
 
-      // Label tag under box
-      ctx.font = "600 11px system-ui, -apple-system, sans-serif";
-      const labelW = Math.min(190, ctx.measureText(box.label).width + 14);
-      ctx.fillStyle = "rgba(26, 29, 30, 0.86)";
-      ctx.fillRect(box.x - labelW / 2, box.y + 19, labelW, 20);
-      ctx.fillStyle = isNext ? "#FFD8A8" : "#F6F7F4";
-      ctx.fillText(box.label, box.x, box.y + 29, labelW - 8);
+      // Paper label tag under box
+      ctx.font = `${isNext ? 700 : 500} 12px ${FONT_TYPE}`;
+      const labelW = Math.min(200, ctx.measureText(box.label).width + 14);
+      const lx = box.x - labelW / 2;
+      const ly = box.y + 20;
+      ctx.fillStyle = isNext ? THEME.paperLight : THEME.paper;
+      ctx.fillRect(lx, ly, labelW, 21);
+      ctx.strokeStyle = isNext ? THEME.formBlue : THEME.ink;
+      ctx.lineWidth = isNext ? 2 : 1;
+      ctx.strokeRect(lx, ly, labelW, 21);
+      ctx.fillStyle = THEME.ink;
+      ctx.fillText(box.label, box.x, ly + 11, labelW - 8);
     }
 
-    // Nose cursor crosshair
-    ctx.strokeStyle = "#E8590C";
-    ctx.lineWidth = 2.5;
+    // Dual-stroke nose cursor crosshair for contrast on both CCTV darks and paper boxes
+    ctx.strokeStyle = THEME.paperLight;
+    ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.arc(this.cursor.x, this.cursor.y, 12, 0, Math.PI * 2);
     ctx.moveTo(this.cursor.x - 18, this.cursor.y);
@@ -239,22 +275,24 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
     ctx.lineTo(this.cursor.x, this.cursor.y + 18);
     ctx.stroke();
 
-    // Top HUD
-    ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
-    ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle =
-      this.status === "failed" ? "#C92A2A" : this.tickFlashMs > 0 ? "#51CF66" : "#E8590C";
-    ctx.fillRect(0, 40, vp.width * progress, 4);
+    ctx.strokeStyle = THEME.stampRed;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.cursor.x, this.cursor.y, 12, 0, Math.PI * 2);
+    ctx.moveTo(this.cursor.x - 18, this.cursor.y);
+    ctx.lineTo(this.cursor.x + 18, this.cursor.y);
+    ctx.moveTo(this.cursor.x, this.cursor.y - 18);
+    ctx.lineTo(this.cursor.x, this.cursor.y + 18);
+    ctx.stroke();
 
-    ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#F6F7F4";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-    ctx.fillText(`FORM 19-A · INPUT DEVICES (${this.nextOrder}/${this.targetCount})`, 16, 20);
-
-    const remaining = Math.max(0, (this.durationMs - this.elapsedMs) / 1000).toFixed(1);
-    ctx.textAlign = "right";
-    ctx.fillText(`${remaining}s`, vp.width - 16, 20);
+    // Unified HUD
+    drawProgressLine(ctx, vp, progress, {
+      danger: this.status === "failed",
+      accent: this.tickFlashMs > 0 ? THEME.stampBlue : THEME.paper,
+    });
+    drawTimerTag(ctx, vp, Math.max(0, this.durationMs - this.elapsedMs), {
+      counter: `${this.nextOrder}/${this.targetCount}`,
+    });
 
     ctx.restore();
   }
@@ -262,10 +300,12 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
   getResult(): ChallengeResult {
     const progress =
       this.status === "passed" ? 1 : Math.min(0.99, this.nextOrder / Math.max(1, this.targetCount));
-    const res: ChallengeResult = { status: this.status, progress, milestones: this.nextOrder };
-    if (this.callout !== undefined) {
-      res.callout = this.callout;
-    }
-    return res;
+    return {
+      status: this.status,
+      progress,
+      milestones: this.nextOrder,
+      ...(this.callout !== undefined ? { callout: this.callout } : {}),
+      ...(this.evidence !== undefined ? { evidence: this.evidence } : {}),
+    };
   }
 }

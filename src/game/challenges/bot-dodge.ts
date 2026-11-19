@@ -1,5 +1,15 @@
 import { mulberry32 } from "../prng";
-import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Rect2D, Viewport } from "../types";
+import { FONT_LABEL, THEME } from "../theme";
+import type {
+  Challenge,
+  ChallengeContext,
+  ChallengeResult,
+  EvidenceMark,
+  FaceSignal,
+  Rect2D,
+  Viewport,
+} from "../types";
+import { clampEvidenceRect, drawProgressLine, drawPromptStrip, drawTimerTag } from "./hud";
 
 export const BOT_OVERLAP_FAIL_RATIO = 0.35;
 const ENTRY_GRACE_MS = 700;
@@ -42,6 +52,7 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
   private durationMs = 12_000;
   private status: ChallengeResult["status"] = "running";
   private callout: string | undefined;
+  private evidence: EvidenceMark | undefined;
   private calloutPool: readonly string[] = ["DESIGNATION APPLIED"];
   private seed = 1;
 
@@ -60,6 +71,7 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
     this.seed = ctx.seed;
     this.status = "running";
     this.callout = undefined;
+    this.evidence = undefined;
     this.slowdownActive = false;
     this.slowdownTriggered = false;
     this.trail = [];
@@ -146,6 +158,7 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
         const rng = mulberry32(this.seed ^ Math.round(this.elapsedMs));
         this.callout =
           this.calloutPool[Math.floor(rng() * this.calloutPool.length)] ?? "DESIGNATION APPLIED";
+        this.evidence = this.buildOverlapEvidence(overlap, signal.faceBox);
         return;
       }
     }
@@ -154,6 +167,23 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
       this.elapsedMs = this.durationMs;
       this.status = "passed";
     }
+  }
+
+  private buildOverlapEvidence(overlap: number, faceBox: Rect2D): EvidenceMark {
+    const ix = Math.max(this.stamp.x, faceBox.x);
+    const iy = Math.max(this.stamp.y, faceBox.y);
+    const ax = Math.min(this.stamp.x + this.stamp.w, faceBox.x + faceBox.w);
+    const ay = Math.min(this.stamp.y + this.stamp.h, faceBox.y + faceBox.h);
+    const rawRect: Rect2D =
+      ax > ix && ay > iy
+        ? { x: ix, y: iy, w: ax - ix, h: ay - iy }
+        : { x: this.stamp.x, y: this.stamp.y, w: this.stamp.w, h: this.stamp.h };
+    const pct = Math.round(overlap * 100);
+    const limitPct = Math.round(BOT_OVERLAP_FAIL_RATIO * 100);
+    return {
+      rect: clampEvidenceRect(rawRect, this.viewport, 60, 44),
+      label: `Overlap ${pct}% / limit ${limitPct}%`,
+    };
   }
 
   private stepMover(mover: StampMover, dtSec: number): void {
@@ -188,6 +218,7 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
   }
 
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+    this.viewport = { ...vp };
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
 
     ctx.save();
@@ -195,93 +226,87 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
     // Subject face bounding box corners
     if (this.faceBox.w > 0 && this.faceBox.h > 0) {
       const { x, y, w, h } = this.faceBox;
-      ctx.strokeStyle = this.status === "failed" ? "#C92A2A" : "rgba(246, 247, 244, 0.75)";
-      ctx.lineWidth = 2;
-      const corner = 14;
+      ctx.strokeStyle = this.status === "failed" ? THEME.stampRed : THEME.paper;
+      ctx.globalAlpha = this.status === "failed" ? 1 : 0.8;
+      ctx.lineWidth = 2.5;
+      const corner = 16;
       drawCornerBracket(ctx, x, y, corner, 1, 1);
       drawCornerBracket(ctx, x + w, y, corner, -1, 1);
       drawCornerBracket(ctx, x, y + h, corner, 1, -1);
       drawCornerBracket(ctx, x + w, y + h, corner, -1, -1);
+      ctx.globalAlpha = 1;
     }
 
     // Ink trail
+    ctx.fillStyle = THEME.stampRed;
     for (let i = 0; i < this.trail.length; i++) {
       const pt = this.trail[i]!;
-      const alpha = ((i + 1) / this.trail.length) * 0.22;
-      ctx.fillStyle = `rgba(201, 42, 42, ${alpha})`;
+      ctx.globalAlpha = ((i + 1) / this.trail.length) * 0.28;
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.globalAlpha = 1;
 
     // Decoy ghost stamp
     if (this.decoy && progress >= 0.35) {
       ctx.save();
-      ctx.strokeStyle = "rgba(246, 247, 244, 0.55)";
+      ctx.fillStyle = "rgba(20, 19, 15, 0.52)";
+      ctx.fillRect(this.decoy.x, this.decoy.y, this.decoy.w, this.decoy.h);
+      ctx.strokeStyle = THEME.paper;
+      ctx.globalAlpha = 0.65;
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 2;
       ctx.strokeRect(this.decoy.x, this.decoy.y, this.decoy.w, this.decoy.h);
-      ctx.fillStyle = "rgba(26, 29, 30, 0.45)";
-      ctx.fillRect(this.decoy.x, this.decoy.y, this.decoy.w, this.decoy.h);
-      ctx.fillStyle = "rgba(246, 247, 244, 0.78)";
-      ctx.font = "700 14px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.setLineDash([]);
+      ctx.fillStyle = THEME.paper;
+      ctx.font = `700 15px ${FONT_LABEL}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("MAYBE?", this.decoy.x + this.decoy.w / 2, this.decoy.y + this.decoy.h / 2);
+      ctx.fillText("MAYBE?", this.decoy.x + this.decoy.w / 2, this.decoy.y + this.decoy.h / 2 + 1);
       ctx.restore();
     }
 
     // Main BOT? rubber stamp
     const armed = this.elapsedMs >= ENTRY_GRACE_MS;
     ctx.save();
-    ctx.fillStyle = armed ? "rgba(201, 42, 42, 0.9)" : "rgba(232, 89, 12, 0.65)";
+    ctx.globalAlpha = armed ? 0.94 : 0.65;
+    ctx.fillStyle = armed ? THEME.stampRed : THEME.formBlue;
     ctx.fillRect(this.stamp.x, this.stamp.y, this.stamp.w, this.stamp.h);
-    ctx.strokeStyle = "#FFFFFF";
+    ctx.strokeStyle = THEME.paperLight;
     ctx.lineWidth = 3;
-    ctx.strokeRect(this.stamp.x + 3, this.stamp.y + 3, this.stamp.w - 6, this.stamp.h - 6);
+    ctx.strokeRect(this.stamp.x + 4, this.stamp.y + 4, this.stamp.w - 8, this.stamp.h - 8);
 
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = `800 ${Math.round(this.stamp.h * 0.48)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.fillStyle = THEME.paperLight;
+    ctx.font = `700 ${Math.round(this.stamp.h * 0.56)}px ${FONT_LABEL}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("BOT?", this.stamp.x + this.stamp.w / 2, this.stamp.y + this.stamp.h / 2 + 1);
+    ctx.fillText("BOT?", this.stamp.x + this.stamp.w / 2, this.stamp.y + this.stamp.h / 2 + 2);
     ctx.restore();
 
     if (this.slowdownActive) {
       const placeBelow = this.stamp.y < 70;
-      const labelY = placeBelow ? this.stamp.y + this.stamp.h + 4 : this.stamp.y - 22;
-      ctx.fillStyle = "rgba(26, 29, 30, 0.85)";
-      ctx.fillRect(this.stamp.x, labelY, this.stamp.w, 18);
-      ctx.fillStyle = "#E8590C";
-      ctx.font = "700 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+      const labelY = placeBelow ? this.stamp.y + this.stamp.h + 4 : this.stamp.y - 24;
+      ctx.fillStyle = THEME.paper;
+      ctx.fillRect(this.stamp.x, labelY, this.stamp.w, 20);
+      ctx.fillStyle = THEME.stampRed;
+      ctx.font = `700 11px ${FONT_LABEL}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("RECALCULATING", this.stamp.x + this.stamp.w / 2, labelY + 9);
+      ctx.fillText("RECALCULATING", this.stamp.x + this.stamp.w / 2, labelY + 11);
     }
 
-    // Header HUD
-    ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
-    ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle = this.status === "failed" ? "#C92A2A" : "#E8590C";
-    ctx.fillRect(0, 40, vp.width * progress, 4);
-
-    ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#F6F7F4";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-    ctx.fillText("FORM 09-C · DESIGNATIONS", 16, 20);
-
-    const remaining = Math.max(0, (this.durationMs - this.elapsedMs) / 1000).toFixed(1);
-    ctx.textAlign = "right";
-    ctx.fillText(`${remaining}s`, vp.width - 16, 20);
+    // Unified HUD
+    drawProgressLine(ctx, vp, progress, { danger: this.status === "failed" });
+    drawTimerTag(ctx, vp, Math.max(0, this.durationMs - this.elapsedMs));
 
     if (this.tooClose) {
-      ctx.fillStyle = "rgba(26, 29, 30, 0.85)";
-      ctx.fillRect(vp.width / 2 - 120, vp.height - 46, 240, 30);
-      ctx.fillStyle = "#E8590C";
-      ctx.font = "700 12px ui-monospace, SFMono-Regular, Menlo, monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("SUBJECT TOO CLOSE · STEP BACK", vp.width / 2, vp.height - 31);
+      drawPromptStrip(ctx, vp, "Subject too close. Step back from the lens.", {
+        label: "DISTANCE NOTICE",
+        labelColor: THEME.stampRed,
+        borderAccent: THEME.stampRed,
+        maxLines: 2,
+      });
     }
 
     ctx.restore();
@@ -289,10 +314,12 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
 
   getResult(): ChallengeResult {
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
-    if (this.callout !== undefined) {
-      return { status: this.status, progress, callout: this.callout };
-    }
-    return { status: this.status, progress };
+    return {
+      status: this.status,
+      progress,
+      ...(this.callout !== undefined ? { callout: this.callout } : {}),
+      ...(this.evidence !== undefined ? { evidence: this.evidence } : {}),
+    };
   }
 }
 

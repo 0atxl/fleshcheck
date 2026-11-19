@@ -31,6 +31,13 @@
 - Added `variant` and `stampText` override plumbing across `ChallengeResult`, `LoopVerdict`, `pickStampText`, `GameLoop` slam rendering, `renderEvidenceCard`, and `app.ts`.
 - Added threshold-edge and stamp-override unit tests in `tests/stamp.test.ts`, `tests/challenges.test.ts`, and `tests/loop.test.ts`.
 
+### B4. Unified HUD, THEME palette, and evidence marks across all challenges
+- Extracted shared HUD helpers (`drawProgressLine`, `drawTimerTag`, `drawPromptStrip`, `clampEvidenceRect`) into `src/game/challenges/hud.ts` and migrated `POKER_FACE`, `NOSE_SPOON`, `BOT_DODGE`, `PASSPORT_PHOTO`, `MOUTH_CATCH`, `AFFECT_DEMO`, `INTERVIEW`, `NOSE_CURSOR`, `EYES_ON_FORM`, and `FULL_AUDIT` off hardcoded colors onto `THEME`, `FONT_TYPE`, and `FONT_LABEL`.
+- Added per-challenge `ChallengeResult.evidence` marks on failure (including sub-round evidence reuse for `FULL_AUDIT`, rendered onto the captured sub-fail frame in `GameLoop`).
+- Enabled `hideWireframe: true` across active face challenges in `src/game/registry.ts` so calibration keeps the wireframe while active rounds stay clean over the CCTV feed.
+- Added per-challenge failure evidence mark and HUD draw tests in `tests/challenges.test.ts`.
+
+
 
 
 

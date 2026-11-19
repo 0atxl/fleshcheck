@@ -1,10 +1,12 @@
 import { mulberry32, shuffleWithRng } from "../prng";
 import { computeHumanPct } from "../scoring";
+import { FONT_LABEL, FONT_TYPE, THEME } from "../theme";
 import type {
   Challenge,
   ChallengeContext,
   ChallengeManifest,
   ChallengeResult,
+  EvidenceMark,
   FaceSignal,
   TryRecord,
   Viewport,
@@ -33,6 +35,7 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
   private transitions: string[] = [];
   private calloutPool: readonly string[] = ["ANNUAL AUDIT FAILED"];
   private firstFailCallout: string | undefined;
+  private firstFailEvidence: EvidenceMark | undefined;
   private status: ChallengeResult["status"] = "running";
   private baseCtx!: ChallengeContext;
 
@@ -50,6 +53,7 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
     this.lastRoundNote = "";
     this.lastRoundPassed = false;
     this.firstFailCallout = undefined;
+    this.firstFailEvidence = undefined;
     this.status = "running";
 
     const eligible = this.getCandidates().filter(
@@ -129,8 +133,13 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
       this.roundProgresses.push(passed ? 1 : subRes.progress);
       this.completedMilestones += subRes.milestones ?? 0;
 
-      if (!passed && !this.firstFailCallout) {
-        this.firstFailCallout = subRes.callout ?? "STATION REJECTED";
+      if (!passed) {
+        if (!this.firstFailCallout) {
+          this.firstFailCallout = subRes.callout ?? "STATION REJECTED";
+        }
+        if (!this.firstFailEvidence && subRes.evidence) {
+          this.firstFailEvidence = subRes.evidence;
+        }
       }
 
       if (this.roundIndex < this.subManifests.length - 1) {
@@ -163,23 +172,32 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
 
     if (this.intermissionMs > 0 && !this.pendingIntermissionDraw) {
       ctx.save();
-      ctx.fillStyle = "rgba(26, 29, 30, 0.84)";
+      ctx.fillStyle = "rgba(20, 19, 15, 0.78)";
       ctx.fillRect(0, 0, vp.width, vp.height);
 
-      ctx.fillStyle = this.lastRoundPassed ? "#51CF66" : "#FF6B6B";
-      ctx.font = "800 18px ui-monospace, SFMono-Regular, Menlo, monospace";
+      const cardW = Math.min(vp.width - 28, 440);
+      const cardH = 98;
+      const cardX = (vp.width - cardW) / 2;
+      const cardY = (vp.height - cardH) / 2;
+      ctx.fillStyle = THEME.paper;
+      ctx.fillRect(cardX, cardY, cardW, cardH);
+      ctx.fillStyle = this.lastRoundPassed ? THEME.stampBlue : THEME.stampRed;
+      ctx.fillRect(cardX, cardY + cardH - 4, cardW, 4);
+
+      ctx.fillStyle = this.lastRoundPassed ? THEME.stampBlue : THEME.stampRed;
+      ctx.font = `700 18px ${FONT_LABEL}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(
         `STATION ${this.roundIndex + 1} OF ${this.subManifests.length}: ${this.lastRoundPassed ? "CLEARED" : "REJECTED"}`,
         vp.width / 2,
-        vp.height / 2 - 16,
-        vp.width - 32,
+        cardY + 30,
+        cardW - 24,
       );
 
-      ctx.fillStyle = "#F6F7F4";
-      ctx.font = "500 14px system-ui, -apple-system, sans-serif";
-      drawWrappedText(ctx, this.lastRoundNote, vp.width / 2, vp.height / 2 + 18, vp.width - 48, 19, 2);
+      ctx.fillStyle = THEME.ink;
+      ctx.font = `500 15px ${FONT_TYPE}`;
+      drawWrappedText(ctx, this.lastRoundNote, vp.width / 2, cardY + 64, cardW - 28, 19, 2);
       ctx.restore();
       return;
     }
@@ -190,21 +208,22 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
       this.activeChallenge.draw(ctx, vp);
     }
 
-    // Sub-round audit strip beneath top bar
+    // Compact paper station chip placed cleanly below the top-right timer tag
     ctx.save();
-    ctx.fillStyle = "rgba(26, 29, 30, 0.85)";
-    ctx.fillRect(vp.width - 210, 48, 194, 24);
-    ctx.fillStyle = "#E8590C";
-    ctx.font = "700 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+    const stationTitle = currentManifest ? currentManifest.title.toUpperCase() : "AUDIT";
+    const chipText = `AUDIT ${Math.min(this.roundIndex + 1, this.subManifests.length)}/${this.subManifests.length} · ${stationTitle}`;
+    ctx.font = `700 12px ${FONT_LABEL}`;
+    const chipW = Math.min(vp.width - 24, ctx.measureText(chipText).width + 16);
+    const chipX = vp.width - chipW - 12;
+    const chipY = 50;
+    ctx.fillStyle = THEME.paper;
+    ctx.fillRect(chipX, chipY, chipW, 22);
+    ctx.fillStyle = THEME.formBlue;
+    ctx.fillRect(chipX, chipY + 20, chipW, 2);
+    ctx.fillStyle = THEME.ink;
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    const stationTitle = currentManifest ? currentManifest.title.toUpperCase() : "AUDIT";
-    ctx.fillText(
-      `AUDIT ${Math.min(this.roundIndex + 1, 3)}/3 · ${stationTitle}`,
-      vp.width - 22,
-      60,
-      180,
-    );
+    ctx.fillText(chipText, vp.width - 20, chipY + 11, chipW - 16);
     ctx.restore();
   }
 
@@ -231,6 +250,9 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
     };
     if (this.status === "failed" && this.firstFailCallout) {
       res.callout = this.firstFailCallout;
+    }
+    if (this.status === "failed" && this.firstFailEvidence) {
+      res.evidence = this.firstFailEvidence;
     }
     return res;
   }

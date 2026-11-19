@@ -1,5 +1,15 @@
 import { mulberry32, shuffleWithRng } from "../prng";
-import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Point2D, Viewport } from "../types";
+import { FONT_LABEL, FONT_TYPE, THEME } from "../theme";
+import type {
+  Challenge,
+  ChallengeContext,
+  ChallengeResult,
+  EvidenceMark,
+  FaceSignal,
+  Point2D,
+  Viewport,
+} from "../types";
+import { clampEvidenceRect, drawProgressLine, drawTimerTag } from "./hud";
 
 const MOUTH_OPEN_THRESHOLD = 0.16;
 
@@ -23,6 +33,7 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
   private durationMs = 12_000;
   private status: ChallengeResult["status"] = "running";
   private callout: string | undefined;
+  private evidence: EvidenceMark | undefined;
   private calloutPool: readonly string[] = ["ILLEGAL STAMP INGESTED"];
   private seed = 1;
 
@@ -43,6 +54,7 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
     this.durationMs = Math.max(1_000, ctx.durationMs);
     this.status = "running";
     this.callout = undefined;
+    this.evidence = undefined;
     this.seed = ctx.seed;
     this.caught = 0;
     this.catchFlashMs = 0;
@@ -126,6 +138,7 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
           const stampCalls = this.calloutPool.filter((c) => !c.includes("QUOTA") && !c.includes("INSUFFICIENT"));
           const pool = stampCalls.length > 0 ? stampCalls : this.calloutPool;
           this.callout = pool[Math.floor(rng() * pool.length)] ?? "ILLEGAL STAMP INGESTED";
+          this.evidence = this.buildMouthEvidence(`Caught ${doc.label.toLowerCase()} stamp`);
           return;
         }
         this.caught += 1;
@@ -143,7 +156,21 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
       this.elapsedMs = this.durationMs;
       this.status = "failed";
       this.callout = "INSUFFICIENT ORAL INTAKE";
+      this.evidence = this.buildMouthEvidence(`Forms ${this.caught} / required ${this.targetForms}`);
     }
+  }
+
+  private buildMouthEvidence(label: string): EvidenceMark {
+    const r = this.catchRadius;
+    return {
+      rect: clampEvidenceRect(
+        { x: this.mouthPos.x - r, y: this.mouthPos.y - r * 0.8, w: r * 2, h: r * 1.6 },
+        this.viewport,
+        72,
+        56,
+      ),
+      label,
+    };
   }
 
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
@@ -153,59 +180,59 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
     ctx.save();
 
     // Mouth intake ring
-    ctx.strokeStyle = this.mouthOpen ? "#2B8A3E" : "rgba(246, 247, 244, 0.7)";
+    const ringRadius = this.catchRadius * (this.mouthOpen ? 1.05 : 0.72);
+    ctx.strokeStyle = this.mouthOpen ? THEME.stampBlue : THEME.paper;
     ctx.lineWidth = this.mouthOpen ? 3.5 : 2;
     ctx.beginPath();
-    ctx.arc(this.mouthPos.x, this.mouthPos.y, this.catchRadius * (this.mouthOpen ? 1.05 : 0.72), 0, Math.PI * 2);
+    ctx.arc(this.mouthPos.x, this.mouthPos.y, ringRadius, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.font = "700 10px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = this.mouthOpen ? "#51CF66" : "#F6F7F4";
+    const mouthLabel = this.mouthOpen ? "INTAKE OPEN" : "SHUT";
+    ctx.font = `700 11px ${FONT_LABEL}`;
+    const chipW = ctx.measureText(mouthLabel).width + 12;
+    const chipY = this.mouthPos.y + this.catchRadius + 6;
+    ctx.fillStyle = this.mouthOpen ? THEME.stampBlue : "rgba(20, 19, 15, 0.75)";
+    ctx.fillRect(this.mouthPos.x - chipW / 2, chipY, chipW, 18);
+    ctx.fillStyle = THEME.paperLight;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(this.mouthOpen ? "INTAKE OPEN" : "SHUT", this.mouthPos.x, this.mouthPos.y + this.catchRadius + 12);
+    ctx.fillText(mouthLabel, this.mouthPos.x, chipY + 10);
 
     // Falling forms & stamps
     for (const doc of this.docs) {
       const x0 = doc.x - doc.w / 2;
       const y0 = doc.y - doc.h / 2;
       if (doc.kind === "stamp") {
-        ctx.fillStyle = "rgba(201, 42, 42, 0.92)";
+        ctx.fillStyle = THEME.stampRed;
         ctx.fillRect(x0, y0, doc.w, doc.h);
-        ctx.strokeStyle = "#FFFFFF";
+        ctx.strokeStyle = THEME.paperLight;
         ctx.lineWidth = 2;
         ctx.strokeRect(x0 + 3, y0 + 3, doc.w - 6, doc.h - 6);
-        ctx.fillStyle = "#FFFFFF";
-        ctx.font = "800 13px ui-monospace, SFMono-Regular, Menlo, monospace";
-        ctx.fillText(doc.label, doc.x, doc.y);
+        ctx.fillStyle = THEME.paperLight;
+        ctx.font = `700 15px ${FONT_LABEL}`;
+        ctx.fillText(doc.label, doc.x, doc.y + 1);
       } else {
-        ctx.fillStyle = "#F6F7F4";
+        ctx.fillStyle = THEME.paperLight;
         ctx.fillRect(x0, y0, doc.w, doc.h);
-        ctx.strokeStyle = "#1A1D1E";
-        ctx.lineWidth = 2;
+        ctx.fillStyle = THEME.formBlue;
+        ctx.fillRect(x0, y0, doc.w, 5);
+        ctx.strokeStyle = THEME.ink;
+        ctx.lineWidth = 1.5;
         ctx.strokeRect(x0, y0, doc.w, doc.h);
-        ctx.fillStyle = "#1A1D1E";
-        ctx.font = "700 12px ui-monospace, SFMono-Regular, Menlo, monospace";
-        ctx.fillText(doc.label, doc.x, doc.y);
+        ctx.fillStyle = THEME.ink;
+        ctx.font = `700 11px ${FONT_TYPE}`;
+        ctx.fillText(doc.label, doc.x, doc.y + 3, doc.w - 8);
       }
     }
 
-    // Header HUD
-    ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
-    ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle =
-      this.status === "failed" ? "#C92A2A" : this.catchFlashMs > 0 ? "#51CF66" : "#E8590C";
-    ctx.fillRect(0, 40, vp.width * progress, 4);
-
-    ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.fillStyle = "#F6F7F4";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-    ctx.fillText(`FORM 07-I · INTAKE (${this.caught}/${this.targetForms})`, 16, 20);
-
-    const remaining = Math.max(0, (this.durationMs - this.elapsedMs) / 1000).toFixed(1);
-    ctx.textAlign = "right";
-    ctx.fillText(`${remaining}s`, vp.width - 16, 20);
+    // Unified HUD
+    drawProgressLine(ctx, vp, progress, {
+      danger: this.status === "failed",
+      accent: this.catchFlashMs > 0 ? THEME.stampBlue : THEME.paper,
+    });
+    drawTimerTag(ctx, vp, Math.max(0, this.durationMs - this.elapsedMs), {
+      counter: `${this.caught}/${this.targetForms}`,
+    });
 
     ctx.restore();
   }
@@ -213,10 +240,12 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
   getResult(): ChallengeResult {
     const progress =
       this.status === "passed" ? 1 : Math.min(0.99, this.caught / Math.max(1, this.targetForms));
-    const res: ChallengeResult = { status: this.status, progress, milestones: this.caught };
-    if (this.callout !== undefined) {
-      res.callout = this.callout;
-    }
-    return res;
+    return {
+      status: this.status,
+      progress,
+      milestones: this.caught,
+      ...(this.callout !== undefined ? { callout: this.callout } : {}),
+      ...(this.evidence !== undefined ? { evidence: this.evidence } : {}),
+    };
   }
 }

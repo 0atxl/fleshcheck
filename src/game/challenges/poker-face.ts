@@ -20,7 +20,7 @@ import type {
   Rect2D,
   Viewport,
 } from "../types";
-import { wrapLines } from "./hud";
+import { drawProgressLine, drawPromptStrip, drawTimerTag } from "./hud";
 
 const SMILE_THRESHOLD = 0.16;
 const PUFF_THRESHOLD = 0.22;
@@ -212,32 +212,14 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
 
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
-    const compact = vp.width < 520;
 
     ctx.save();
 
     this.drawHangingStamp(ctx, vp);
-
-    // Progress line along the very top edge
-    ctx.fillStyle = "rgba(20, 19, 15, 0.45)";
-    ctx.fillRect(0, 0, vp.width, 4);
-    ctx.fillStyle = this.shownRatio > 0.7 ? THEME.stampRed : THEME.paper;
-    ctx.fillRect(0, 0, vp.width * progress, 4);
-
-    // Timer tag, top right
-    const remaining = Math.max(0, (this.durationMs - this.elapsedMs) / 1000).toFixed(1);
-    ctx.font = `700 ${compact ? 17 : 20}px ${FONT_TYPE}`;
-    const tagW = ctx.measureText(`${remaining}s`).width + 20;
-    const tagH = compact ? 28 : 32;
-    ctx.fillStyle = THEME.paper;
-    ctx.fillRect(vp.width - tagW - 12, 14, tagW, tagH);
-    ctx.fillStyle = THEME.ink;
-    ctx.textAlign = "right";
-    ctx.textBaseline = "middle";
-    ctx.fillText(`${remaining}s`, vp.width - 22, 14 + tagH / 2 + 1);
-
+    drawProgressLine(ctx, vp, progress, { danger: this.shownRatio > 0.7 });
+    drawTimerTag(ctx, vp, Math.max(0, this.durationMs - this.elapsedMs));
     this.drawNotes(ctx);
-    this.drawTaunt(ctx, vp, compact);
+    this.drawTaunt(ctx, vp);
 
     ctx.restore();
   }
@@ -277,48 +259,16 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
     return { idx, text: this.activeTaunts[idx] ?? "", sinceMs: this.elapsedMs - idx * slot };
   }
 
-  private drawTaunt(ctx: CanvasRenderingContext2D, vp: Viewport, compact: boolean): void {
+  private drawTaunt(ctx: CanvasRenderingContext2D, vp: Viewport): void {
     const { text, sinceMs } = this.currentTaunt();
     if (!text) return;
 
-    const fontSize = compact ? 19 : 22;
-    const lineH = Math.round(fontSize * 1.35);
-    const margin = 14;
-    const pad = 14;
-    const boxW = vp.width - margin * 2;
-
-    ctx.font = `500 ${fontSize}px ${FONT_TYPE}`;
-    const lines = wrapLines(ctx, text, boxW - pad * 2, 3);
-    const boxH = lines.length * lineH + pad * 2 - 4;
-    const boxY = vp.height - boxH - margin;
-
-    ctx.fillStyle = THEME.paper;
-    ctx.fillRect(margin, boxY, boxW, boxH);
-    ctx.fillStyle = THEME.ink;
-    ctx.fillRect(margin, boxY + boxH - 3, boxW, 3);
-
-    // Typewriter reveal over the fully wrapped layout so lines never reflow
-    let remaining = Math.max(0, Math.floor((sinceMs / 1000) * TYPE_CHARS_PER_SEC));
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = THEME.ink;
-    let caretX = margin + pad;
-    let caretY = boxY + pad - 2 + lineH / 2;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-      const shown = line.slice(0, remaining);
-      const y = boxY + pad - 2 + i * lineH + lineH / 2;
-      ctx.fillText(shown, margin + pad, y);
-      caretX = margin + pad + ctx.measureText(shown).width;
-      caretY = y;
-      remaining -= line.length + 1;
-      if (remaining <= 0) break;
-    }
-    const blink = Math.floor(this.elapsedMs / 450) % 2 === 0;
-    if (blink) {
-      ctx.fillStyle = THEME.ink;
-      ctx.fillRect(caretX + 2, caretY - fontSize * 0.55, Math.ceil(fontSize * 0.5), Math.ceil(fontSize * 1.1));
-    }
+    const revealChars = Math.max(0, Math.floor((sinceMs / 1000) * TYPE_CHARS_PER_SEC));
+    drawPromptStrip(ctx, vp, text, {
+      revealChars,
+      elapsedMs: this.elapsedMs,
+      maxLines: 3,
+    });
   }
 
   private drawNotes(ctx: CanvasRenderingContext2D): void {

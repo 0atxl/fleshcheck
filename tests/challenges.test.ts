@@ -732,3 +732,220 @@ describe("POKER_FACE office feedback", () => {
     expect(normalRes.stampText).toBeUndefined();
   });
 });
+
+describe("B4 evidence marks and unified HUD across all challenges", () => {
+  const vp = { width: 640, height: 480 };
+
+  function expectSensibleEvidence(
+    evidence: { rect: { x: number; y: number; w: number; h: number }; label: string } | undefined,
+    pattern: RegExp,
+  ) {
+    expect(evidence).toBeDefined();
+    expect(evidence!.rect.w).toBeGreaterThanOrEqual(40);
+    expect(evidence!.rect.h).toBeGreaterThanOrEqual(36);
+    expect(evidence!.rect.x).toBeGreaterThanOrEqual(0);
+    expect(evidence!.rect.y).toBeGreaterThanOrEqual(0);
+    expect(evidence!.rect.x + evidence!.rect.w).toBeLessThanOrEqual(vp.width);
+    expect(evidence!.rect.y + evidence!.rect.h).toBeLessThanOrEqual(vp.height);
+    expect(evidence!.label).not.toContain("!");
+    expect(evidence!.label).toMatch(pattern);
+  }
+
+  it("NOSE_SPOON emits spoon box and degree readout on drop", () => {
+    const baseline = baseBaseline();
+    const ch = new NoseSpoonChallenge();
+    ch.init({ seed: 11, baseline, copy: NOSE_SPOON_COPY, viewport: vp, durationMs: 12_000 });
+    for (let t = 0; t < 4_000 && ch.getResult().status === "running"; t += 50) {
+      ch.update(50, makeFaceSignal({ pose: { yaw: 0, pitch: 0, roll: -0.65 } }, baseline));
+    }
+    const spy = makeSpyCanvasContext();
+    ch.draw(spy.ctx, vp);
+    expect(ch.getResult().status).toBe("failed");
+    expectSensibleEvidence(ch.getResult().evidence, /^Spoon \d+° \/ limit 38°$/);
+  });
+
+  it("BOT_DODGE emits overlap rect and percentage readout on hit", () => {
+    const baseline = baseBaseline();
+    const ch = new BotDodgeChallenge();
+    ch.init({ seed: 22, baseline, copy: BOT_DODGE_COPY, viewport: vp, durationMs: 12_000 });
+    for (let t = 0; t < 2_000 && ch.getResult().status === "running"; t += 50) {
+      const stamp = ch.getStampRect();
+      ch.update(50, makeFaceSignal({ faceBox: { x: stamp.x - 10, y: stamp.y - 10, w: stamp.w + 20, h: stamp.h + 20 } }, baseline));
+    }
+    const spy = makeSpyCanvasContext();
+    ch.draw(spy.ctx, vp);
+    expect(ch.getResult().status).toBe("failed");
+    expectSensibleEvidence(ch.getResult().evidence, /^Overlap \d+% \/ limit 35%$/);
+  });
+
+  it("PASSPORT_PHOTO emits face box and failed rule label", () => {
+    const baseline = baseBaseline();
+    const ch = new PassportPhotoChallenge();
+    ch.init({ seed: 33, baseline, copy: PASSPORT_PHOTO_COPY, viewport: vp, durationMs: 12_000 });
+    for (let t = 0; t < 1_000 && ch.getResult().status === "running"; t += 50) {
+      ch.update(
+        50,
+        makeFaceSignal({ shapes: { ...baseline.shapes, eyeBlinkLeft: 0.9, eyeBlinkRight: 0.9 } }, baseline),
+      );
+    }
+    const spy = makeSpyCanvasContext();
+    ch.draw(spy.ctx, vp);
+    expect(ch.getResult().status).toBe("failed");
+    expectSensibleEvidence(ch.getResult().evidence, /^Eyes closed \d+\.\ds \/ limit 0\.6s$/);
+  });
+
+  it("MOUTH_CATCH emits mouth rect and caught stamp label", () => {
+    const baseline = baseBaseline();
+    const ch = new MouthCatchChallenge();
+    ch.init({ seed: 44, baseline, copy: MOUTH_CATCH_COPY, viewport: vp, durationMs: 12_000 });
+    for (let t = 0; t < 5_000 && ch.getResult().status === "running"; t += 50) {
+      const stamp = ch.getActiveDocs().find((d) => d.kind === "stamp");
+      ch.update(
+        50,
+        makeFaceSignal(
+          stamp
+            ? { mouth: { x: stamp.x, y: stamp.y }, shapes: { ...baseline.shapes, jawOpen: 0.5 } }
+            : {},
+          baseline,
+        ),
+      );
+    }
+    const spy = makeSpyCanvasContext();
+    ch.draw(spy.ctx, vp);
+    expect(ch.getResult().status).toBe("failed");
+    expectSensibleEvidence(ch.getResult().evidence, /^Caught reject stamp$/);
+  });
+
+  it("AFFECT_DEMO emits face box and missed prompt label on timeout", () => {
+    const baseline = baseBaseline();
+    const ch = new AffectDemoChallenge();
+    ch.init({ seed: 55, baseline, copy: AFFECT_DEMO_COPY, viewport: vp, durationMs: 12_000 });
+    const prompt = ch.getCurrentPrompt().toLowerCase();
+    for (let t = 0; t < 4_000 && ch.getResult().status === "running"; t += 50) {
+      ch.update(50, makeFaceSignal({}, baseline));
+    }
+    const spy = makeSpyCanvasContext();
+    ch.draw(spy.ctx, vp);
+    expect(ch.getResult().status).toBe("failed");
+    expectSensibleEvidence(ch.getResult().evidence, new RegExp(`^Missed: ${prompt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  });
+
+  it("INTERVIEW emits face box and wrong answer label", () => {
+    const baseline = baseBaseline();
+    const ch = new InterviewChallenge();
+    ch.init({
+      seed: 66,
+      baseline,
+      copy: {
+        ...INTERVIEW_COPY,
+        questions: [{ text: "Were you born on Earth.", answer: "yes" }],
+      },
+      viewport: vp,
+      durationMs: 12_000,
+    });
+    // Settle grace (250ms), then shake head (no)
+    for (let t = 0; t < 300; t += 50) {
+      ch.update(50, makeFaceSignal({}, baseline));
+    }
+    ch.update(50, makeFaceSignal({ pose: { yaw: 0.25, pitch: 0, roll: 0 } }, baseline));
+    const spy = makeSpyCanvasContext();
+    ch.draw(spy.ctx, vp);
+    expect(ch.getResult().status).toBe("failed");
+    expectSensibleEvidence(ch.getResult().evidence, /^Answered no \/ expected yes$/);
+  });
+
+  it("NOSE_CURSOR emits trap checkbox rect and trap label when trap is ticked", () => {
+    const baseline = baseBaseline();
+    const ch = new NoseCursorChallenge();
+    ch.init({ seed: 77, baseline, copy: NOSE_CURSOR_COPY, viewport: vp, durationMs: 12_000 });
+    const trap = ch.getTrapTarget()!;
+    expect(trap).not.toBeNull();
+    // Wait out entry grace then dwell on trap
+    for (let t = 0; t < 1_500 && ch.getResult().status === "running"; t += 50) {
+      ch.update(50, makeFaceSignal({ nose: t >= 700 ? trap : baseline.nose }, baseline));
+    }
+    const spy = makeSpyCanvasContext();
+    ch.draw(spy.ctx, vp);
+    expect(ch.getResult().status).toBe("failed");
+    expectSensibleEvidence(ch.getResult().evidence, /^Trap: .+/);
+    // Rect should center near the trap checkbox
+    const rect = ch.getResult().evidence!.rect;
+    expect(Math.abs(rect.x + rect.w / 2 - trap.x)).toBeLessThan(50);
+    expect(Math.abs(rect.y + rect.h / 2 - trap.y)).toBeLessThan(50);
+  });
+
+  it("EYES_ON_FORM emits eye region rect and gaze reading on distraction look", () => {
+    const baseline = baseBaseline();
+    const ch = new EyesOnFormChallenge();
+    ch.init({ seed: 88, baseline, copy: EYES_ON_FORM_COPY, viewport: vp, durationMs: 12_000 });
+    const landmarks = Array.from({ length: 478 }, () => ({ x: 320, y: 240 }));
+    landmarks[33] = { x: 260, y: 190 };
+    landmarks[133] = { x: 295, y: 190 };
+    landmarks[159] = { x: 278, y: 184 };
+    landmarks[145] = { x: 278, y: 196 };
+    landmarks[362] = { x: 345, y: 190 };
+    landmarks[263] = { x: 380, y: 190 };
+    landmarks[386] = { x: 362, y: 184 };
+    landmarks[374] = { x: 362, y: 196 };
+
+    for (let t = 0; t < 3_000 && ch.getResult().status === "running"; t += 50) {
+      const popup = ch.getActivePopup();
+      const shapes =
+        popup?.side === "left"
+          ? { ...baseline.shapes, eyeLookOutLeft: 0.45, eyeLookInRight: 0.45 }
+          : popup?.side === "right"
+            ? { ...baseline.shapes, eyeLookOutRight: 0.45, eyeLookInLeft: 0.45 }
+            : baseline.shapes;
+      ch.update(50, makeFaceSignal({ shapes, landmarks }, baseline));
+    }
+    const spy = makeSpyCanvasContext();
+    ch.draw(spy.ctx, vp);
+    expect(ch.getResult().status).toBe("failed");
+    expectSensibleEvidence(ch.getResult().evidence, /^Gaze (left|right) 0\.\d\d \/ limit 0\.28$/);
+    // Rect hugs the eyes (~y=190) rather than the bottom of the frame
+    expect(ch.getResult().evidence!.rect.y).toBeLessThan(200);
+  });
+
+  it("FULL_AUDIT reuses the failing sub-round evidence mark", () => {
+    const baseline = baseBaseline();
+    const landmarks = Array.from({ length: 478 }, () => ({ x: 320, y: 300 }));
+    landmarks[61] = { x: 280, y: 305 };
+    landmarks[291] = { x: 360, y: 305 };
+    landmarks[0] = { x: 320, y: 295 };
+    landmarks[17] = { x: 320, y: 320 };
+
+    const makeSub = (id: ChallengeManifest["id"]): ChallengeManifest => ({
+      id,
+      title: id,
+      department: "Test",
+      prompt: "Hold neutral.",
+      model: "face",
+      durationMs: 12_000,
+      enabled: true,
+      copy: POKER_FACE_COPY,
+      create: () => new PokerFaceChallenge(),
+    });
+    const audit = new FullAuditChallenge(() => [
+      makeSub("POKER_FACE"),
+      makeSub("PASSPORT_PHOTO"),
+      makeSub("EYES_ON_FORM"),
+    ]);
+    audit.init({ seed: 99, baseline, copy: FULL_AUDIT_COPY, viewport: vp, durationMs: 9_000 });
+
+    for (let i = 0; i < 300 && audit.getResult().status === "running"; i++) {
+      const doneCount = audit.getResult().roundRecords?.length ?? 0;
+      const smile = doneCount === 0 ? 0.7 : 0.05;
+      audit.update(
+        50,
+        makeFaceSignal(
+          { shapes: { ...baseline.shapes, mouthSmileLeft: smile, mouthSmileRight: smile }, landmarks },
+          baseline,
+        ),
+      );
+    }
+
+    const res = audit.getResult();
+    expect(res.status).toBe("failed");
+    expectSensibleEvidence(res.evidence, /^Smile 0\.\d\d \/ limit 0\.16$/);
+  });
+});

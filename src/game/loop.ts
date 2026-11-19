@@ -461,7 +461,7 @@ export class GameLoop {
           ? this.cleanCanvas
           : this.canvas;
       snapCtx.drawImage(source, 0, 0);
-      if (!useSubFail && !passed && "evidence" in res && res.evidence) {
+      if (!passed && "evidence" in res && res.evidence) {
         drawEvidenceAnnotation(snapCtx, res.evidence);
       }
     }
