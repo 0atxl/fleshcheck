@@ -48,9 +48,11 @@
 - Persisted rank locally in `CaseFileStore` and surfaced it in the intro meta row, personnel case file dialog, and evidence card (`CLASSIFICATION` field).
 - Covered all rank titles in `tests/voice.test.ts` and added rank progression/persistence tests in `tests/scoring.test.ts`.
 
+## Part C: Production launch prep (Vercel)
 
-
-
-
-
-
+### C1. Vercel headers, OG metadata, and launch hygiene
+- Added `vercel.json` mirroring every security and caching header from `public/_headers` (CSP, `X-Frame-Options`, COOP, CORP, `Permissions-Policy`, `Referrer-Policy`, `X-Content-Type-Options`, `/og-card.png` `cross-origin` CORP + 24h cache, and immutable `/assets/(.*)` cache) while keeping `public/_headers` intact for local E2E verification.
+- Added `"engines": { "node": ">=22.12.0" }` to `package.json` for Vite 8 / Vitest 5 / Vercel Node runtime compatibility.
+- Updated `index.html` with absolute `https://fleshcheck.vercel.app` Open Graph, Twitter Card, and canonical URLs (keeping `LAUNCH_EPOCH_UTC` at `2026-11-18`).
+- Redesigned `public/og-card.png` (1200×630) in the warm archival paper bureaucratic form palette (`THEME`, `Archivo Narrow`, `Courier Prime`, checkbox declaration, OBV seal, and distressed red rubber stamp) following `docs/voice.md`.
+- Removed untracked `fleshcheck-codebase.zip` and added `*.zip` to `.gitignore`.
