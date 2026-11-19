@@ -4,7 +4,14 @@ import { FULL_AUDIT_COPY } from "../src/copy/full-audit";
 import { POKER_FACE_COPY } from "../src/copy/poker-face";
 import { FullAuditChallenge } from "../src/game/challenges/full-audit";
 import { PokerFaceChallenge } from "../src/game/challenges/poker-face";
-import { GameLoop, SLAM_APPROACH_MS, SLAM_TOTAL_FAIL_MS, type LoopVerdict } from "../src/game/loop";
+import {
+  GameLoop,
+  probeSaturationComposite,
+  SLAM_APPROACH_MS,
+  SLAM_TOTAL_FAIL_MS,
+  SurveillanceQualityMonitor,
+  type LoopVerdict,
+} from "../src/game/loop";
 import type { Challenge, ChallengeManifest, ChallengeResult } from "../src/game/types";
 import { FaceTracker } from "../src/vision/tracker";
 
@@ -377,5 +384,71 @@ describe("GameLoop integration", () => {
     // Milestones 1 & 2 chime while running; final milestone 3 triggers pass chime only
     expect(milestonesPlayed).toBe(2);
     expect(passesPlayed).toBe(1);
+  });
+
+  it("steps down surveillance quality full -> medium -> low when frames regularly exceed 24 ms", () => {
+    const monitor = new SurveillanceQualityMonitor();
+    expect(monitor.level).toBe("full");
+
+    // Smooth 16 ms frames keep quality at full
+    for (let i = 0; i < 32; i++) {
+      monitor.record(16);
+    }
+    expect(monitor.level).toBe("full");
+
+    // Occasional slow spikes do not trigger fallback
+    for (let i = 0; i < 16; i++) {
+      monitor.record(i % 4 === 0 ? 35 : 16);
+    }
+    expect(monitor.level).toBe("full");
+
+    // Sustained >24 ms frames step down to medium (skips scanlines + multiply)
+    for (let i = 0; i < 16; i++) {
+      monitor.record(30);
+    }
+    expect(monitor.level).toBe("medium");
+
+    // Still >24 ms after step-down drops vignette as well
+    for (let i = 0; i < 16; i++) {
+      monitor.record(28);
+    }
+    expect(monitor.level).toBe("low");
+
+    monitor.reset();
+    expect(monitor.level).toBe("full");
+  });
+
+  it("detects broken saturation composite support via probeSaturationComposite", () => {
+    // Working saturation desaturates #ff0000 to neutral grey (~76,76,76)
+    globalThis.document = {
+      createElement: () => ({
+        width: 2,
+        height: 2,
+        getContext: () => ({
+          fillStyle: "",
+          globalCompositeOperation: "source-over",
+          globalAlpha: 1,
+          fillRect: () => {},
+          getImageData: () => ({ data: new Uint8ClampedArray([76, 76, 76, 255]) }),
+        }),
+      }),
+    } as unknown as Document;
+    expect(probeSaturationComposite()).toBe(true);
+
+    // Broken saturation leaves red unchanged
+    globalThis.document = {
+      createElement: () => ({
+        width: 2,
+        height: 2,
+        getContext: () => ({
+          fillStyle: "",
+          globalCompositeOperation: "source-over",
+          globalAlpha: 1,
+          fillRect: () => {},
+          getImageData: () => ({ data: new Uint8ClampedArray([255, 0, 0, 255]) }),
+        }),
+      }),
+    } as unknown as Document;
+    expect(probeSaturationComposite()).toBe(false);
   });
 });

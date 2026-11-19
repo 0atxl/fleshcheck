@@ -17,6 +17,82 @@ export const SLAM_SHAKE_MS = 320;
 export const SLAM_TOTAL_FAIL_MS = 1_100;
 export const SLAM_TOTAL_PASS_MS = 800;
 
+/** Active frame time budget (ms) before surveillance effects step down. */
+export const QUALITY_BUDGET_MS = 24;
+const QUALITY_WINDOW = 16;
+const QUALITY_SLOW_COUNT = 12;
+
+export type SurveillanceQuality = "full" | "medium" | "low";
+
+/**
+ * Monitors active-round frame times and steps down surveillance effects if
+ * frames regularly exceed 24 ms: skips scanlines and multiply tint first
+ * ("medium"), then the vignette ("low").
+ */
+export class SurveillanceQualityMonitor {
+  private quality: SurveillanceQuality = "full";
+  private samples: number[] = [];
+
+  get level(): SurveillanceQuality {
+    return this.quality;
+  }
+
+  reset(): void {
+    this.quality = "full";
+    this.samples = [];
+  }
+
+  record(frameMs: number): SurveillanceQuality {
+    if (this.quality === "low" || !Number.isFinite(frameMs) || frameMs < 0) {
+      return this.quality;
+    }
+    this.samples.push(frameMs);
+    if (this.samples.length > QUALITY_WINDOW) {
+      this.samples.shift();
+    }
+    if (this.samples.length === QUALITY_WINDOW) {
+      let slow = 0;
+      for (const s of this.samples) {
+        if (s > QUALITY_BUDGET_MS) slow += 1;
+      }
+      if (slow >= QUALITY_SLOW_COUNT) {
+        this.quality = this.quality === "full" ? "medium" : "low";
+        this.samples = [];
+      }
+    }
+    return this.quality;
+  }
+}
+
+/**
+ * Verifies whether `globalCompositeOperation = "saturation"` actually
+ * desaturates on the current 2D canvas implementation (guards against iOS
+ * Safari quirks without touching `ctx.filter`).
+ */
+export function probeSaturationComposite(): boolean {
+  if (typeof document === "undefined") return true;
+  try {
+    const tile = document.createElement("canvas");
+    tile.width = 2;
+    tile.height = 2;
+    const ctx = tile.getContext("2d");
+    if (!ctx || typeof ctx.getImageData !== "function") return true;
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(0, 0, 2, 2);
+    ctx.globalCompositeOperation = "saturation";
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#808080";
+    ctx.fillRect(0, 0, 2, 2);
+    const data = ctx.getImageData(0, 0, 1, 1).data;
+    const r = data[0] ?? 255;
+    const g = data[1] ?? 0;
+    const b = data[2] ?? 0;
+    return Math.abs(r - g) < 12 && Math.abs(g - b) < 12 && r > 20 && r < 220;
+  } catch {
+    return false;
+  }
+}
+
 const HAVE_CURRENT_DATA = 2;
 
 export type GamePhase =
@@ -85,6 +161,10 @@ export class GameLoop {
   private slam: SlamState | null = null;
   private lastFace: Rect2D | null = null;
   private scanPattern: CanvasPattern | null = null;
+  private vignetteCache: { width: number; height: number; gradient: CanvasGradient } | null = null;
+  private saturationSupported: boolean | null = null;
+  private readonly qualityMonitor = new SurveillanceQualityMonitor();
+  private activeFramesRecorded = 0;
   private readonly snapshotCanvas: HTMLCanvasElement;
   private readonly firstSubFailCanvas: HTMLCanvasElement;
   private readonly cleanCanvas: HTMLCanvasElement;
@@ -120,6 +200,8 @@ export class GameLoop {
     this.hasSubFailSnapshot = false;
     this.seenSubRounds = 0;
     this.seenMilestones = 0;
+    this.activeFramesRecorded = 0;
+    this.qualityMonitor.reset();
     this.calibration = new CalibrationCollector(CALIBRATION_MS);
     this.tracker.resetLoss();
     this.setPhase("CALIBRATING");
@@ -152,6 +234,7 @@ export class GameLoop {
   }
 
   private tick = (nowMs: number): void => {
+    const tickStartMs = performance.now();
     const dtMs = Math.min(100, Math.max(0, nowMs - this.lastFrameMs));
     this.lastFrameMs = nowMs;
 
@@ -311,6 +394,14 @@ export class GameLoop {
     }
 
     ctx.restore();
+    if (this.phase === "ACTIVE") {
+      // Skip the very first active frame so calibration-to-active transition cost doesn't skew quality
+      if (this.activeFramesRecorded > 0) {
+        const frameWorkMs = performance.now() - tickStartMs;
+        this.qualityMonitor.record(Math.max(frameWorkMs, dtMs));
+      }
+      this.activeFramesRecorded += 1;
+    }
     if (this.phase !== "VERDICT") {
       this.rafId = requestAnimationFrame(this.tick);
     }
@@ -414,41 +505,49 @@ export class GameLoop {
 
   /**
    * Treats the feed like office CCTV: desaturated, warm, vignetted, scanlined,
-   * with the case number and clock burned in.
+   * with the case number and clock burned in. Automatically steps down heavy
+   * passes on slow devices and avoids `ctx.filter`.
    */
   private drawSurveillance(ctx: CanvasRenderingContext2D, vp: Viewport, recording: boolean): void {
-    ctx.save();
-    ctx.globalCompositeOperation = "saturation";
-    ctx.globalAlpha = 0.72;
-    ctx.fillStyle = "#808080";
-    ctx.fillRect(0, 0, vp.width, vp.height);
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = 0.45;
-    ctx.fillStyle = THEME.paper;
-    ctx.fillRect(0, 0, vp.width, vp.height);
-    ctx.restore();
-
-    if (typeof ctx.createRadialGradient === "function") {
-      const cx = vp.width / 2;
-      const cy = vp.height / 2;
-      const g = ctx.createRadialGradient(
-        cx,
-        cy,
-        Math.min(vp.width, vp.height) * 0.36,
-        cx,
-        cy,
-        Math.max(vp.width, vp.height) * 0.72,
-      );
-      g.addColorStop(0, "rgba(0, 0, 0, 0)");
-      g.addColorStop(1, "rgba(0, 0, 0, 0.5)");
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, vp.width, vp.height);
+    const quality = this.qualityMonitor.level;
+    if (this.saturationSupported === null) {
+      this.saturationSupported = probeSaturationComposite();
     }
 
-    const pattern = this.getScanPattern(ctx);
-    if (pattern) {
-      ctx.fillStyle = pattern;
+    ctx.save();
+    if (this.saturationSupported) {
+      ctx.globalCompositeOperation = "saturation";
+      ctx.globalAlpha = 0.72;
+      ctx.fillStyle = "#808080";
       ctx.fillRect(0, 0, vp.width, vp.height);
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = "#808080";
+      ctx.fillRect(0, 0, vp.width, vp.height);
+    }
+    if (quality === "full") {
+      ctx.globalCompositeOperation = "multiply";
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = THEME.paper;
+      ctx.fillRect(0, 0, vp.width, vp.height);
+    }
+    ctx.restore();
+
+    if (quality !== "low" && typeof ctx.createRadialGradient === "function") {
+      const vignette = this.getVignetteGradient(ctx, vp);
+      if (vignette) {
+        ctx.fillStyle = vignette;
+        ctx.fillRect(0, 0, vp.width, vp.height);
+      }
+    }
+
+    if (quality === "full") {
+      const pattern = this.getScanPattern(ctx);
+      if (pattern) {
+        ctx.fillStyle = pattern;
+        ctx.fillRect(0, 0, vp.width, vp.height);
+      }
     }
 
     const now = new Date();
@@ -472,6 +571,31 @@ export class GameLoop {
       ctx.fill();
     }
     ctx.restore();
+  }
+
+  private getVignetteGradient(ctx: CanvasRenderingContext2D, vp: Viewport): CanvasGradient | null {
+    if (
+      this.vignetteCache &&
+      this.vignetteCache.width === vp.width &&
+      this.vignetteCache.height === vp.height
+    ) {
+      return this.vignetteCache.gradient;
+    }
+    if (typeof ctx.createRadialGradient !== "function") return null;
+    const cx = vp.width / 2;
+    const cy = vp.height / 2;
+    const gradient = ctx.createRadialGradient(
+      cx,
+      cy,
+      Math.min(vp.width, vp.height) * 0.36,
+      cx,
+      cy,
+      Math.max(vp.width, vp.height) * 0.72,
+    );
+    gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0.5)");
+    this.vignetteCache = { width: vp.width, height: vp.height, gradient };
+    return gradient;
   }
 
   private getScanPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
