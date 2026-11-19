@@ -5,6 +5,7 @@ import faceModelUrl from "../assets/face_landmarker.task?url";
 
 interface NetworkInfoLike {
   saveData?: boolean;
+  effectiveType?: string;
 }
 
 type NavigatorWithConnection = Navigator & {
@@ -15,19 +16,23 @@ let prefetched = false;
 
 /**
  * Warms the browser HTTP cache with WASM and model bytes ahead of execution.
- * Respects Chromium's Data Saver signal when present.
+ * Respects Chromium's Data Saver signal and skips automatic dwell prefetch on
+ * slow cellular links to avoid burning ~18.8 MB for idle visitors.
  */
-export function prefetchFaceAssets(): void {
+export function prefetchFaceAssets(options: { autoDwell?: boolean } = {}): void {
   if (prefetched) return;
   if (typeof navigator !== "undefined") {
     const conn = (navigator as NavigatorWithConnection).connection;
     if (conn?.saveData === true) return;
+    if (options.autoDwell && conn?.effectiveType && conn.effectiveType !== "4g") {
+      return;
+    }
   }
   prefetched = true;
 
   for (const url of [wasmLoaderPath, wasmBinaryPath, faceModelUrl]) {
     fetch(url, { priority: "low" } as RequestInit)
-      .then((res) => (res.ok ? res.arrayBuffer() : undefined))
+      .then((res) => (res.ok ? res.blob() : undefined))
       .catch(() => {});
   }
 }

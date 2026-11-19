@@ -28,6 +28,7 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
 
   private targetForms = 4;
   private caught = 0;
+  private catchFlashMs = 0;
   private mouthPos: Point2D = { x: 320, y: 300 };
   private mouthOpen = false;
   private catchRadius = 44;
@@ -44,15 +45,17 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
     this.callout = undefined;
     this.seed = ctx.seed;
     this.caught = 0;
+    this.catchFlashMs = 0;
     this.docs = [];
     this.spawnIndex = 0;
-    this.nextSpawnMs = 250;
+    const isShortRound = this.durationMs <= 5_000;
+    this.nextSpawnMs = isShortRound ? 150 : 250;
     this.viewport = { ...ctx.viewport };
     this.mouthPos = { x: ctx.baseline.nose.x, y: ctx.baseline.nose.y + 50 };
     this.mouthOpen = false;
     this.catchRadius = Math.max(38, Math.min(ctx.viewport.width, ctx.viewport.height) * 0.085);
 
-    this.targetForms = this.durationMs <= 5_000 ? 2 : 4;
+    this.targetForms = isShortRound ? 2 : 4;
 
     if (ctx.copy.callouts.length > 0) {
       this.calloutPool = ctx.copy.callouts;
@@ -63,18 +66,8 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
     this.formNames = shuffleWithRng(srcForms, rng);
   }
 
-  spawnForTest(kind: "form" | "stamp", x: number, y: number): void {
-    this.docs.push({
-      id: ++this.spawnIndex,
-      kind,
-      label: kind === "form" ? "Form 27-B" : "BOT?",
-      x,
-      y,
-      vy: 140,
-      w: 84,
-      h: 42,
-      resolved: false,
-    });
+  getActiveDocs(): readonly { kind: "form" | "stamp"; x: number; y: number }[] {
+    return this.docs.filter((d) => !d.resolved).map((d) => ({ kind: d.kind, x: d.x, y: d.y }));
   }
 
   update(dtMs: number, signal: FaceSignal): void {
@@ -83,16 +76,22 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
     const clampedDt = Math.min(80, Math.max(1, dtMs));
     const dtSec = clampedDt / 1000;
     this.elapsedMs += clampedDt;
+    if (this.catchFlashMs > 0) {
+      this.catchFlashMs = Math.max(0, this.catchFlashMs - clampedDt);
+    }
     this.mouthPos = { ...signal.mouth };
     this.mouthOpen = (signal.delta.jawOpen ?? 0) > MOUTH_OPEN_THRESHOLD;
 
     // Deterministic scheduled spawns aligned horizontally near user's mouth lane
-    while (this.elapsedMs >= this.nextSpawnMs && this.elapsedMs < this.durationMs - 800) {
+    const isShortRound = this.durationMs <= 5_000;
+    const spawnCutoffMs = isShortRound ? this.durationMs - 650 : this.durationMs - 800;
+    while (this.elapsedMs >= this.nextSpawnMs && this.elapsedMs < spawnCutoffMs) {
       const rng = mulberry32(this.seed + this.spawnIndex * 97);
       const isStamp = this.spawnIndex % 3 === 1;
       const laneJitter = (rng() - 0.5) * this.viewport.width * 0.34;
       const x = Math.max(60, Math.min(this.viewport.width - 60, this.mouthPos.x + laneJitter));
-      const vy = (this.viewport.height * 0.36) + rng() * 50;
+      const baseVy = isShortRound ? this.viewport.height * 0.45 : this.viewport.height * 0.36;
+      const vy = baseVy + rng() * 50;
 
       this.docs.push({
         id: this.spawnIndex,
@@ -107,7 +106,7 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
       });
 
       this.spawnIndex += 1;
-      const cadence = this.durationMs <= 5_000 ? 750 : 1_150;
+      const cadence = isShortRound ? 600 : 1_150;
       this.nextSpawnMs += cadence;
     }
 
@@ -130,6 +129,7 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
           return;
         }
         this.caught += 1;
+        this.catchFlashMs = 220;
         if (this.caught >= this.targetForms) {
           this.status = "passed";
           return;
@@ -193,7 +193,8 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
     // Header HUD
     ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
     ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle = this.status === "failed" ? "#C92A2A" : "#E8590C";
+    ctx.fillStyle =
+      this.status === "failed" ? "#C92A2A" : this.catchFlashMs > 0 ? "#51CF66" : "#E8590C";
     ctx.fillRect(0, 40, vp.width * progress, 4);
 
     ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -212,9 +213,10 @@ export class MouthCatchChallenge implements Challenge<FaceSignal> {
   getResult(): ChallengeResult {
     const progress =
       this.status === "passed" ? 1 : Math.min(0.99, this.caught / Math.max(1, this.targetForms));
+    const res: ChallengeResult = { status: this.status, progress, milestones: this.caught };
     if (this.callout !== undefined) {
-      return { status: this.status, progress, callout: this.callout };
+      res.callout = this.callout;
     }
-    return { status: this.status, progress };
+    return res;
   }
 }

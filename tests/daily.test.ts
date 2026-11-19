@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getUtcDayNumber, selectDailyChallenge } from "../src/game/daily";
+import {
+  formatUtcCountdown,
+  getMsUntilNextUtcDay,
+  getUtcDayNumber,
+  selectDailyChallenge,
+} from "../src/game/daily";
 import { PokerFaceChallenge } from "../src/game/challenges/poker-face";
 import { ACTIVE_CHALLENGES } from "../src/game/registry";
 import type { ChallengeManifest } from "../src/game/types";
@@ -59,7 +64,7 @@ describe("daily UTC rotation", () => {
     expect(selectDailyChallenge(2, roster).challenge.id).toBe("POKER_FACE");
   });
 
-  it("rotates the live 4-challenge Phase 2 roster without repeating consecutive days", () => {
+  it("rotates the full active challenge roster without repeating consecutive days", () => {
     expect(ACTIVE_CHALLENGES.length).toBeGreaterThanOrEqual(4);
     const seen = new Set<string>();
     let prevId: string | null = null;
@@ -70,5 +75,14 @@ describe("daily UTC rotation", () => {
       seen.add(picked.challenge.id);
     }
     expect(seen.size).toBe(ACTIVE_CHALLENGES.length);
+  });
+
+  it("computes remaining milliseconds until UTC midnight and formats HH:MM:SS countdowns", () => {
+    const t = Date.parse("2026-11-20T19:47:51.000Z");
+    const rem = getMsUntilNextUtcDay(t);
+    expect(rem).toBe((4 * 3600 + 12 * 60 + 9) * 1000);
+    expect(formatUtcCountdown(rem)).toBe("04:12:09");
+    expect(formatUtcCountdown(0)).toBe("00:00:00");
+    expect(formatUtcCountdown(500)).toBe("00:00:01");
   });
 });

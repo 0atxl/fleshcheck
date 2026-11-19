@@ -1,5 +1,6 @@
 import { mulberry32, shuffleWithRng } from "../prng";
-import type { Baseline, Challenge, ChallengeContext, ChallengeResult, FaceSignal, Point2D, Viewport } from "../types";
+import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Point2D, Viewport } from "../types";
+import { drawWrappedText } from "./hud";
 
 export const MAX_SPOON_ANGLE_RAD = (38 * Math.PI) / 180;
 
@@ -26,6 +27,13 @@ export function computeEyeRollRad(signal: Pick<FaceSignal, "landmarks" | "pose">
   return signal.pose.roll;
 }
 
+function hasEyeCornerLandmarks(signal: Pick<FaceSignal, "landmarks">): boolean {
+  const rightOnScreen = signal.landmarks[33];
+  const leftOnScreen = signal.landmarks[263];
+  if (!rightOnScreen || !leftOnScreen) return false;
+  return Math.hypot(rightOnScreen.x - leftOnScreen.x, rightOnScreen.y - leftOnScreen.y) > 5;
+}
+
 /**
  * Asset Handling challenge: balance a regulation spoon carrying a federal egg
  * on the nose tip against seeded crosswind gusts.
@@ -35,7 +43,8 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
   private durationMs = 12_000;
   private angle = 0;
   private angularVel = 0;
-  private baselineRoll = 0;
+  private baselineEyeRoll: number | undefined;
+  private baselinePoseRoll = 0;
   private anchor: Point2D = { x: 320, y: 240 };
   private prevNoseX: number | null = null;
   private activeGustForce = 0;
@@ -52,7 +61,8 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     this.seed = ctx.seed;
     this.status = "running";
     this.callout = undefined;
-    this.baselineRoll = ctx.baseline.rollRad;
+    this.baselineEyeRoll = ctx.baseline.eyeRollRad;
+    this.baselinePoseRoll = ctx.baseline.rollRad;
     this.anchor = { ...ctx.baseline.nose };
     this.prevNoseX = null;
 
@@ -72,7 +82,8 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     });
 
     const sourceCommentary = ctx.copy.commentary ?? ["Keep the federal egg above your bridge."];
-    this.commentaryLines = shuffleWithRng(sourceCommentary, rng).slice(0, 5);
+    const lineCount = this.durationMs <= 5_000 ? 2 : 5;
+    this.commentaryLines = shuffleWithRng(sourceCommentary, rng).slice(0, lineCount);
     if (ctx.copy.callouts.length > 0) {
       this.calloutPool = ctx.copy.callouts;
     }
@@ -90,8 +101,18 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     this.elapsedMs += clampedDt;
     this.anchor = { ...signal.nose };
 
-    const currentRoll = computeEyeRollRad(signal);
-    const deltaRoll = clamp(currentRoll - this.baselineRoll, -0.7, 0.7);
+    // Always subtract baseline computed with the same roll estimator and sign convention
+    let rawDeltaRoll: number;
+    if (hasEyeCornerLandmarks(signal)) {
+      const eyeRoll = computeEyeRollRad(signal);
+      if (this.baselineEyeRoll === undefined) {
+        this.baselineEyeRoll = eyeRoll;
+      }
+      rawDeltaRoll = eyeRoll - this.baselineEyeRoll;
+    } else {
+      rawDeltaRoll = signal.pose.roll - this.baselinePoseRoll;
+    }
+    const deltaRoll = clamp(rawDeltaRoll, -0.7, 0.7);
 
     let noseVelX = 0;
     if (this.prevNoseX !== null) {
@@ -212,8 +233,8 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     // Tilt meter & wind indicator
     const deg = Math.round((this.angle * 180) / Math.PI);
     const gaugeW = Math.min(180, vp.width * 0.36);
-    ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
-    ctx.fillRect(16, 58, gaugeW, 24);
+    ctx.fillStyle = "rgba(26, 29, 30, 0.78)";
+    ctx.fillRect(16, 58, gaugeW, 42);
 
     const norm = clamp(this.angle / MAX_SPOON_ANGLE_RAD, -1, 1);
     const markerX = 16 + gaugeW / 2 + norm * (gaugeW / 2 - 8);
@@ -225,13 +246,14 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     ctx.font = "600 10px ui-monospace, SFMono-Regular, Menlo, monospace";
     ctx.fillStyle = "#F6F7F4";
     ctx.textAlign = "left";
-    ctx.fillText(`TILT ${deg > 0 ? `+${deg}` : deg}° / ±38°`, 22, 92);
+    ctx.fillText(`TILT ${deg > 0 ? `+${deg}` : deg}° / ±38°`, 22, 90);
 
     if (Math.abs(this.activeGustForce) > 0.2) {
       const windLabel = this.activeGustForce > 0 ? "CROSSWIND >>>" : "<<< CROSSWIND";
-      ctx.fillStyle = "rgba(232, 89, 12, 0.88)";
+      ctx.fillStyle = "#E8590C";
       ctx.fillRect(vp.width - 148, 58, 132, 24);
-      ctx.fillStyle = "#FFFFFF";
+      ctx.fillStyle = "#1A1D1E";
+      ctx.font = "800 10px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.textAlign = "center";
       ctx.fillText(windLabel, vp.width - 82, 70);
     }
@@ -244,14 +266,15 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
     const line = this.commentaryLines[lineIdx];
     if (line) {
       const margin = 16;
-      const boxH = 54;
+      const boxW = vp.width - margin * 2;
+      const boxH = 58;
       const boxY = vp.height - boxH - margin;
       ctx.fillStyle = "rgba(26, 29, 30, 0.86)";
-      ctx.fillRect(margin, boxY, vp.width - margin * 2, boxH);
+      ctx.fillRect(margin, boxY, boxW, boxH);
       ctx.fillStyle = "#F6F7F4";
       ctx.font = "500 14px system-ui, -apple-system, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText(line, vp.width / 2, boxY + boxH / 2);
+      drawWrappedText(ctx, line, vp.width / 2, boxY + boxH / 2, boxW - 28, 18, 2);
     }
 
     ctx.restore();
@@ -269,5 +292,3 @@ export class NoseSpoonChallenge implements Challenge<FaceSignal> {
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
-
-export type { Baseline };

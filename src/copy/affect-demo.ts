@@ -17,7 +17,7 @@ export const AFFECT_DEMO_COPY: CopyBank = {
     "Mild disappointment",
     "Performative surprise",
     "Raised eyebrow",
-    "Visible tongue",
+    "Sideways jaw",
     "Regulated smile",
     "Bureaucratic suspicion",
     "Inflated cheeks",

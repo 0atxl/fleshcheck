@@ -2,9 +2,15 @@ import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { MAX_TRIES_PER_DAY, PREFETCH_DWELL_MS } from "../config";
 import { STALLING_LINES, UI_COPY } from "../copy/global";
 import { CaseFileStore } from "../game/case-file";
-import { getUtcDayNumber, parseChallengeLink, selectDailyChallenge } from "../game/daily";
+import {
+  formatUtcCountdown,
+  getMsUntilNextUtcDay,
+  getUtcDayNumber,
+  parseChallengeLink,
+  selectDailyChallenge,
+} from "../game/daily";
 import { GameLoop, type LoopVerdict } from "../game/loop";
-import { ACTIVE_CHALLENGES } from "../game/registry";
+import { ACTIVE_CHALLENGES, getRosterForDay } from "../game/registry";
 import { formatShareLine, formatTrySquare } from "../game/scoring";
 import type { ChallengeManifest, TryRecord } from "../game/types";
 import { initCopyHandlers } from "../lib/copy";
@@ -12,12 +18,19 @@ import { canvasToPngBlob, downloadBlob } from "../lib/export-png";
 import { ComplianceSfx } from "../lib/sfx";
 import { RoundClipRecorder, type RecordedClip } from "../output/clip";
 import { renderEvidenceCard } from "../output/evidence-card";
-import { buildChallengeLink, buildXIntentUrl } from "../output/share";
+import {
+  buildChallengeLink,
+  buildXIntentUrl,
+  isNativeShareAvailable,
+  shareEvidenceCard,
+} from "../output/share";
 import { requestCamera, stopCamera } from "../vision/camera";
 import { createFaceLandmarker, prefetchFaceAssets } from "../vision/loader";
 import { FaceTracker } from "../vision/tracker";
 import { mountDevSwitcher } from "./dev-switcher";
 import { hidePanel, showPanel } from "./transitions";
+
+const MAX_SANDBOX_DISPLAY_TRIES = 6;
 
 export function bootApp(): void {
   initCopyHandlers();
@@ -28,7 +41,7 @@ export function bootApp(): void {
   const linkInfo = parseChallengeLink(window.location.search, todayDay);
   const activeDay = linkInfo.dayOverride ?? todayDay;
   const isReplay = linkInfo.dayOverride !== null && linkInfo.dayOverride < todayDay;
-  const dailyPick = selectDailyChallenge(activeDay, ACTIVE_CHALLENGES);
+  const dailyPick = selectDailyChallenge(activeDay, getRosterForDay(activeDay));
   let manifest: ChallengeManifest = dailyPick.challenge;
   let seed = dailyPick.seed;
   let isDevSandbox = false;
@@ -51,6 +64,7 @@ export function bootApp(): void {
   const replayBanner = mustGet<HTMLElement>("replay-banner");
   const privacyNotice = mustGet<HTMLElement>("privacy-notice");
   const checkbox = mustGet<HTMLInputElement>("verify-human");
+  const checkboxLabelEl = mustGet<HTMLElement>("verify-human-label");
   const captchaWidget = mustGet<HTMLElement>("captcha-widget");
   const metaTries = mustGet<HTMLElement>("meta-tries");
   const metaStreak = mustGet<HTMLElement>("meta-streak");
@@ -76,8 +90,12 @@ export function bootApp(): void {
   const challengeLinkInput = mustGet<HTMLInputElement>("challenge-link-value");
   const downloadPngBtn = mustGet<HTMLButtonElement>("download-png");
   const downloadClipBtn = mustGet<HTMLButtonElement>("download-clip");
+  const shareNativeBtn = mustGet<HTMLButtonElement>("share-native");
   const postXLink = mustGet<HTMLAnchorElement>("post-x-link");
   const retryTryBtn = mustGet<HTMLButtonElement>("retry-try");
+  const nextCaseRow = mustGet<HTMLElement>("next-case-row");
+  const nextCaseText = mustGet<HTMLElement>("next-case-text");
+  const reloadNextCaseBtn = mustGet<HTMLButtonElement>("reload-next-case");
 
   const openCaseBtn = mustGet<HTMLButtonElement>("open-case-file");
   const closeCaseBtn = mustGet<HTMLButtonElement>("close-case-file");
@@ -96,6 +114,7 @@ export function bootApp(): void {
   }
 
   syncHeaderCopy();
+  checkboxLabelEl.textContent = UI_COPY.checkboxLabel;
   privacyNotice.textContent = UI_COPY.privacyNotice;
   noFleshTitle.textContent = UI_COPY.noFleshTitle;
   noFleshBody.textContent = UI_COPY.noFleshBody;
@@ -122,12 +141,29 @@ export function bootApp(): void {
   let activeStream: MediaStream | null = null;
   let activeVideo: HTMLVideoElement | null = null;
   let stallTimer = 0;
+  let countdownTimer = 0;
+  let sessionToken = 0;
+  let panelToken = 0;
+  let inspectionStarting = false;
+  const nativeShareSupported = isNativeShareAvailable();
+  shareNativeBtn.hidden = !nativeShareSupported;
 
   const panels = [panelIntro, panelLoading, panelStage, panelNoFlesh, panelVerdict];
 
-  async function switchPanel(target: HTMLElement): Promise<void> {
+  async function switchPanel(target: HTMLElement, focusEl?: HTMLElement | null): Promise<void> {
+    const myPanelToken = ++panelToken;
     await Promise.all(panels.filter((p) => p !== target).map((p) => hidePanel(p)));
+    if (myPanelToken !== panelToken) return;
     showPanel(target);
+    if (focusEl && !focusEl.hidden) {
+      focusEl.focus({ preventScroll: true });
+    }
+  }
+
+  function setLaunchControlsDisabled(disabled: boolean): void {
+    checkbox.disabled = disabled;
+    retryTryBtn.disabled = disabled;
+    retryCameraBtn.disabled = disabled;
   }
 
   function updateMuteUi(): void {
@@ -146,7 +182,7 @@ export function bootApp(): void {
 
   function currentDisplaySquares(): TryRecord[] {
     if (isReplay || isDevSandbox) {
-      return sandboxDisplaySquares ?? sandboxTries;
+      return sandboxDisplaySquares ?? sandboxTries.slice(-MAX_SANDBOX_DISPLAY_TRIES);
     }
     return store.getTodayDisplaySquares(activeDay);
   }
@@ -162,13 +198,13 @@ export function bootApp(): void {
         : maxTries === 1
           ? `Annual audit: 1 attempt${squares ? ` (${squares})` : ""}`
           : `Today's tries: ${tries.length}/${maxTries}${squares ? ` (${squares})` : ""}`;
-    metaStreak.textContent = `Streak: ${store.getData().streak}`;
+    metaStreak.textContent = `Streak: ${store.getEffectiveStreak(todayDay)}`;
   }
 
   function renderCaseFile(): void {
-    const data = store.getData();
+    const streak = store.getEffectiveStreak(todayDay);
     const totalTries = store.getTotalTries();
-    caseStats.textContent = `Streak: ${data.streak} · Total inspections: ${totalTries}`;
+    caseStats.textContent = `Streak: ${streak} · Total inspections: ${totalTries}`;
 
     caseGrid.replaceChildren();
     for (const item of ACTIVE_CHALLENGES) {
@@ -211,7 +247,40 @@ export function bootApp(): void {
     return landmarkerPromise;
   }
 
+  function stopCountdownTicker(): void {
+    if (countdownTimer) {
+      window.clearInterval(countdownTimer);
+      countdownTimer = 0;
+    }
+  }
+
+  function syncCountdownUi(): void {
+    const liveDay = getUtcDayNumber();
+    if (liveDay > todayDay) {
+      stopCountdownTicker();
+      nextCaseText.textContent = UI_COPY.newCaseReady(String(liveDay).padStart(2, "0"));
+      reloadNextCaseBtn.hidden = false;
+      nextCaseRow.hidden = false;
+      return;
+    }
+    const remaining = formatUtcCountdown(getMsUntilNextUtcDay());
+    nextCaseText.textContent = UI_COPY.nextCaseCountdown(remaining);
+    reloadNextCaseBtn.hidden = true;
+    nextCaseRow.hidden = false;
+  }
+
+  function startCountdownTicker(): void {
+    stopCountdownTicker();
+    syncCountdownUi();
+    if (getUtcDayNumber() <= todayDay) {
+      countdownTimer = window.setInterval(syncCountdownUi, 1_000);
+    }
+  }
+
   function cleanupSession(): void {
+    sessionToken += 1;
+    inspectionStarting = false;
+    stopCountdownTicker();
     if (stallTimer) {
       window.clearInterval(stallTimer);
       stallTimer = 0;
@@ -241,14 +310,31 @@ export function bootApp(): void {
     const portrait = window.innerWidth <= 560;
     stageCanvas.width = portrait ? 480 : 640;
     stageCanvas.height = portrait ? 640 : 480;
+    // Pin CSS aspect ratio to active backing dimensions so mid-round resize/rotation never stretches video
+    stageCanvas.style.aspectRatio = `${stageCanvas.width} / ${stageCanvas.height}`;
+  }
+
+  async function showFailurePanel(kind: "camera" | "engine", showWebViewHint: boolean): Promise<void> {
+    noFleshTitle.textContent = kind === "camera" ? UI_COPY.noFleshTitle : UI_COPY.engineErrorTitle;
+    noFleshBody.textContent = kind === "camera" ? UI_COPY.noFleshBody : UI_COPY.engineErrorBody;
+    webviewNote.hidden = !showWebViewHint;
+    checkbox.checked = false;
+    setLaunchControlsDisabled(false);
+    await switchPanel(panelNoFlesh, noFleshTitle);
   }
 
   async function startInspection(): Promise<void> {
+    if (inspectionStarting) return;
+    cleanupSession();
+    const myToken = ++sessionToken;
+    inspectionStarting = true;
+
     sfx.unlock();
     sfx.playTick();
-    checkbox.disabled = true;
+    setLaunchControlsDisabled(true);
 
     await switchPanel(panelLoading);
+    if (myToken !== sessionToken) return;
     startStallTicker();
 
     const videoEl = document.createElement("video");
@@ -258,26 +344,31 @@ export function bootApp(): void {
       getLandmarker(),
     ]);
 
+    if (myToken !== sessionToken) {
+      if (camRes.status === "fulfilled" && camRes.value.ok) {
+        stopCamera(camRes.value.stream, camRes.value.video);
+      }
+      return;
+    }
+
     if (stallTimer) {
       window.clearInterval(stallTimer);
       stallTimer = 0;
     }
+    inspectionStarting = false;
 
     if (camRes.status === "rejected" || !camRes.value.ok) {
-      cleanupSession();
       const errInfo = camRes.status === "fulfilled" && !camRes.value.ok ? camRes.value : null;
-      webviewNote.hidden = !(errInfo && (errInfo.inAppWebView || errInfo.reason === "webview-blocked"));
-      checkbox.checked = false;
-      checkbox.disabled = false;
-      await switchPanel(panelNoFlesh);
+      const isWebViewBlock = Boolean(
+        errInfo && (errInfo.inAppWebView || errInfo.reason === "webview-blocked"),
+      );
+      await showFailurePanel("camera", isWebViewBlock);
       return;
     }
 
     if (landmarkerResult.status === "rejected") {
       stopCamera(camRes.value.stream, camRes.value.video);
-      checkbox.checked = false;
-      checkbox.disabled = false;
-      await switchPanel(panelNoFlesh);
+      await showFailurePanel("engine", false);
       return;
     }
 
@@ -288,7 +379,9 @@ export function bootApp(): void {
     const tracker = new FaceTracker(landmarkerResult.value);
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    await switchPanel(panelStage);
+    await switchPanel(panelStage, abortBtn);
+    if (myToken !== sessionToken) return;
+
     stageStatusNote.textContent = "Hold neutral during calibration.";
     sfx.playCalibrateHum();
 
@@ -300,6 +393,7 @@ export function bootApp(): void {
       seed,
       {
         onPhaseChange(phase) {
+          if (myToken !== sessionToken) return;
           if (phase === "ACTIVE") {
             stageStatusNote.textContent = manifest.prompt;
           } else if (phase === "PAUSED") {
@@ -307,22 +401,25 @@ export function bootApp(): void {
           }
         },
         onRoundActive(canvas) {
+          if (myToken !== sessionToken) return;
           clipRecorder.start(canvas);
         },
         onVerdict(verdict) {
-          void handleVerdict(verdict);
+          if (myToken !== sessionToken) return;
+          void handleVerdict(verdict, myToken);
         },
         playAlertBeep: () => sfx.playAlertBeep(),
         playStampThud: () => sfx.playStampThud(),
         playPassChime: () => sfx.playPassChime(),
         playRoundAdvance: () => sfx.playRoundAdvance(),
+        playMilestone: () => sfx.playMilestone(),
       },
       reducedMotion,
     );
     activeLoop.start();
   }
 
-  async function handleVerdict(verdict: LoopVerdict): Promise<void> {
+  async function handleVerdict(verdict: LoopVerdict, myToken: number): Promise<void> {
     const clipPromise = clipRecorder.stop();
 
     const record: TryRecord = {
@@ -334,11 +431,31 @@ export function bootApp(): void {
     const roundSquares =
       verdict.roundRecords && verdict.roundRecords.length > 0 ? verdict.roundRecords : undefined;
 
-    if (isReplay || isDevSandbox) {
+    // Evaluate against prior stored best BEFORE recording so post-reload tries
+    // never overwrite a higher earlier try on the verdict card.
+    const priorBest =
+      isReplay || isDevSandbox
+        ? bestVerdict
+        : bestVerdict ?? store.getBestTodayTry(activeDay);
+
+    if (isDevSandbox) {
       sandboxTries = [...sandboxTries, record];
       if (roundSquares) {
         sandboxDisplaySquares = roundSquares;
       }
+    } else if (isReplay) {
+      sandboxTries = [...sandboxTries, record];
+      if (roundSquares) {
+        sandboxDisplaySquares = roundSquares;
+      }
+      store.recordVerdict(
+        manifest.id,
+        activeDay,
+        record,
+        true,
+        maxTriesForManifest(),
+        roundSquares,
+      );
     } else {
       store.recordVerdict(
         manifest.id,
@@ -351,9 +468,9 @@ export function bootApp(): void {
     }
 
     const shouldReplaceBest =
-      !bestVerdict ||
-      verdict.pct > bestVerdict.pct ||
-      (verdict.pct === bestVerdict.pct && verdict.passed && !bestVerdict.passed);
+      !priorBest ||
+      verdict.pct > priorBest.pct ||
+      (verdict.pct === priorBest.pct && verdict.passed && !priorBest.passed);
 
     if (shouldReplaceBest) {
       bestVerdict = {
@@ -363,9 +480,10 @@ export function bootApp(): void {
         callout: verdict.callout,
         elapsedMs: verdict.elapsedMs,
         durationMs: verdict.durationMs,
-        landmarks: verdict.landmarks,
         ...(roundSquares ? { roundRecords: roundSquares } : {}),
       };
+      // Clear any clip from an earlier try until this new best try's clip finishes finalizing
+      bestClip = null;
       if (!bestSnapshotCanvas) {
         bestSnapshotCanvas = document.createElement("canvas");
       }
@@ -384,11 +502,12 @@ export function bootApp(): void {
     activeStream = null;
     activeVideo = null;
     checkbox.checked = false;
-    checkbox.disabled = false;
+    setLaunchControlsDisabled(false);
 
-    showVerdictPanel();
+    showVerdictPanel(true);
 
     const clip = await clipPromise;
+    if (myToken !== sessionToken) return;
     if (clip && shouldReplaceBest) {
       bestClip = clip;
       updateClipButtonUi();
@@ -405,14 +524,31 @@ export function bootApp(): void {
     downloadClipBtn.hidden = false;
   }
 
-  function showVerdictPanel(): void {
+  function showVerdictPanel(moveFocus = false): void {
     const tries = currentTries();
     const displaySquares = currentDisplaySquares();
     const bestStored = isReplay || isDevSandbox ? bestVerdict : store.getBestTodayTry(activeDay);
-    const bestPct = bestVerdict?.pct ?? bestStored?.pct ?? 0;
-    const bestPassed = bestVerdict?.passed ?? bestStored?.passed ?? false;
-    const callout =
-      bestVerdict?.callout ?? (bestPassed ? "COMPLIANCE VERIFIED" : "SESSION RECORD ARCHIVED");
+
+    const liveBest =
+      bestVerdict !== null &&
+      (!bestStored ||
+        bestVerdict.pct > bestStored.pct ||
+        (bestVerdict.pct === bestStored.pct && (bestVerdict.passed || !bestStored.passed)))
+        ? bestVerdict
+        : null;
+
+    const bestPct = liveBest ? liveBest.pct : (bestStored?.pct ?? 0);
+    const bestPassed = liveBest ? liveBest.passed : (bestStored?.passed ?? false);
+    const callout = liveBest
+      ? liveBest.callout
+      : bestPassed
+        ? "COMPLIANCE VERIFIED"
+        : "SESSION RECORD ARCHIVED";
+    const elapsedMs = liveBest
+      ? liveBest.elapsedMs
+      : bestPassed
+        ? manifest.durationMs
+        : Math.round((bestPct / 100) * manifest.durationMs);
 
     renderEvidenceCard(evidenceCanvas, {
       dayNumber: activeDay,
@@ -422,11 +558,11 @@ export function bootApp(): void {
       passed: bestPassed,
       callout,
       tries: displaySquares,
-      elapsedMs: bestVerdict?.elapsedMs ?? (bestPassed ? manifest.durationMs : Math.round((bestPct / 100) * manifest.durationMs)),
+      elapsedMs,
       durationMs: manifest.durationMs,
       seed,
       isReplay,
-      snapshot: bestSnapshotCanvas,
+      snapshot: liveBest ? bestSnapshotCanvas : null,
     });
 
     const shareText = formatShareLine({
@@ -442,23 +578,40 @@ export function bootApp(): void {
     challengeLinkInput.value = buildChallengeLink(activeDay, bestPct);
 
     const maxTries = maxTriesForManifest();
+    const dailyFinished =
+      !isReplay && !isDevSandbox && store.isTodayFinished(activeDay, maxTries);
     const canRetry =
       isReplay ||
       isDevSandbox ||
-      (!store.isTodayFinished(activeDay, maxTries) && tries.length < maxTries);
+      (!dailyFinished && tries.length < maxTries);
     retryTryBtn.hidden = !canRetry;
+    shareNativeBtn.hidden = !nativeShareSupported;
     updateClipButtonUi();
 
+    if (dailyFinished) {
+      startCountdownTicker();
+    } else {
+      stopCountdownTicker();
+      nextCaseRow.hidden = true;
+    }
+
     updateIntroMeta();
-    void switchPanel(panelVerdict);
+    const focusTarget = moveFocus
+      ? canRetry
+        ? retryTryBtn
+        : nativeShareSupported
+          ? shareNativeBtn
+          : downloadPngBtn
+      : null;
+    void switchPanel(panelVerdict, focusTarget);
   }
 
-  // Prefetch triggers: mouseenter / focus / pointerdown + 3s dwell fallback
+  // Prefetch triggers: mouseenter / focus / pointerdown + 3s dwell fallback (gated on fast networks)
   const triggerPrefetch = () => prefetchFaceAssets();
   captchaWidget.addEventListener("mouseenter", triggerPrefetch, { once: true });
   captchaWidget.addEventListener("pointerdown", triggerPrefetch, { once: true });
   checkbox.addEventListener("focus", triggerPrefetch, { once: true });
-  window.setTimeout(triggerPrefetch, PREFETCH_DWELL_MS);
+  window.setTimeout(() => prefetchFaceAssets({ autoDwell: true }), PREFETCH_DWELL_MS);
 
   checkbox.addEventListener("change", () => {
     if (checkbox.checked) {
@@ -469,9 +622,9 @@ export function bootApp(): void {
   abortBtn.addEventListener("click", () => {
     cleanupSession();
     checkbox.checked = false;
-    checkbox.disabled = false;
+    setLaunchControlsDisabled(false);
     updateIntroMeta();
-    void switchPanel(panelIntro);
+    void switchPanel(panelIntro, checkbox);
   });
 
   retryCameraBtn.addEventListener("click", () => {
@@ -489,6 +642,21 @@ export function bootApp(): void {
     } catch {
       // Ignore blob errors on constrained browsers
     }
+  });
+
+  shareNativeBtn.addEventListener("click", async () => {
+    const text = shareTextEl.textContent?.trim() ?? "";
+    if (!text) return;
+    shareNativeBtn.disabled = true;
+    try {
+      await shareEvidenceCard(evidenceCanvas, text, `fleshcheck-${dayStr}.png`);
+    } finally {
+      shareNativeBtn.disabled = false;
+    }
+  });
+
+  reloadNextCaseBtn.addEventListener("click", () => {
+    window.location.assign(window.location.pathname);
   });
 
   downloadClipBtn.addEventListener("click", () => {
@@ -514,11 +682,23 @@ export function bootApp(): void {
     caseDialog.close();
   });
 
-  caseDialog.addEventListener("click", (event) => {
-    if (event.target === caseDialog) {
-      caseDialog.close();
-    }
-  });
+  // Fallback for browsers without native <dialog closedby="any"> light-dismiss (e.g. Safari)
+  if (!("closedBy" in HTMLDialogElement.prototype)) {
+    const isOutsideDialog = (e: PointerEvent) => {
+      const r = caseDialog.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    let pressedOutside = false;
+    caseDialog.addEventListener("pointerdown", (e) => {
+      pressedOutside = isOutsideDialog(e);
+    });
+    caseDialog.addEventListener("pointerup", (e) => {
+      if (pressedOutside && isOutsideDialog(e)) {
+        caseDialog.close();
+      }
+      pressedOutside = false;
+    });
+  }
 
   window.addEventListener("pagehide", () => {
     cleanupSession();
@@ -532,7 +712,7 @@ export function bootApp(): void {
     const switcher = mountDevSwitcher(ACTIVE_CHALLENGES, manifest.id, (nextManifest) => {
       cleanupSession();
       checkbox.checked = false;
-      checkbox.disabled = false;
+      setLaunchControlsDisabled(false);
       manifest = nextManifest;
       seed = dailyPick.seed ^ nextManifest.id.length;
       isDevSandbox = true;
@@ -552,13 +732,13 @@ export function bootApp(): void {
       const url = new URL(window.location.href);
       url.searchParams.set("challenge", nextManifest.id);
       window.history.replaceState({}, "", url.toString());
-      void switchPanel(panelIntro);
+      void switchPanel(panelIntro, checkbox);
     });
   }
 
   // Returning player who already finished today lands straight on their daily record
   if (!isReplay && !isDevSandbox && store.isTodayFinished(activeDay, maxTriesForManifest())) {
-    showVerdictPanel();
+    showVerdictPanel(false);
   }
 }
 

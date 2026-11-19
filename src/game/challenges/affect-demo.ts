@@ -2,46 +2,85 @@ import { mulberry32, shuffleWithRng } from "../prng";
 import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Viewport } from "../types";
 
 const HOLD_REQUIRED_MS = 350;
+const FLASH_DURATION_MS = 220;
+
+function ratio(val: number | undefined, threshold: number): number {
+  if (!val || val <= 0 || threshold <= 0) return 0;
+  return val / threshold;
+}
+
+/**
+ * Returns normalized proximity [0..1] toward satisfying an expression recipe.
+ * A value of 1 means the expression threshold is currently met.
+ */
+export function computeAffectProximity(label: string, signal: FaceSignal): number {
+  const d = signal.delta;
+  let score = 0;
+
+  switch (label) {
+    case "Mild disappointment":
+      score = Math.max(
+        ratio(((d.mouthFrownLeft ?? 0) + (d.mouthFrownRight ?? 0)) / 2, 0.12),
+        ratio(((d.mouthPressLeft ?? 0) + (d.mouthPressRight ?? 0)) / 2, 0.16),
+      );
+      break;
+    case "Performative surprise":
+      score = Math.max(
+        Math.min(
+          ratio(((d.eyeWideLeft ?? 0) + (d.eyeWideRight ?? 0)) / 2, 0.14),
+          ratio(d.jawOpen, 0.12),
+        ),
+        ratio(d.browInnerUp, 0.22),
+      );
+      break;
+    case "Raised eyebrow":
+      score = ratio(Math.max(d.browOuterUpLeft ?? 0, d.browOuterUpRight ?? 0), 0.18);
+      break;
+    case "Sideways jaw":
+      score = ratio(Math.max(d.jawLeft ?? 0, d.jawRight ?? 0), 0.16);
+      break;
+    case "Regulated smile":
+      score = ratio(((d.mouthSmileLeft ?? 0) + (d.mouthSmileRight ?? 0)) / 2, 0.22);
+      break;
+    case "Bureaucratic suspicion":
+      score = Math.max(
+        ratio(((d.eyeSquintLeft ?? 0) + (d.eyeSquintRight ?? 0)) / 2, 0.16),
+        ratio(((d.browDownLeft ?? 0) + (d.browDownRight ?? 0)) / 2, 0.16),
+      );
+      break;
+    case "Inflated cheeks":
+      score = ratio(d.cheekPuff, 0.20);
+      break;
+    case "Silent yawn":
+      score = ratio(d.jawOpen, 0.26);
+      break;
+    case "Polite disapproval":
+      score = Math.max(
+        ratio(d.mouthPucker, 0.20),
+        ratio(((d.noseSneerLeft ?? 0) + (d.noseSneerRight ?? 0)) / 2, 0.14),
+      );
+      break;
+    case "Sudden realization":
+      score = Math.min(ratio(d.browInnerUp, 0.18), ratio(d.jawOpen, 0.10));
+      break;
+    case "Skeptical scowl":
+      score = ratio(((d.browDownLeft ?? 0) + (d.browDownRight ?? 0)) / 2, 0.16);
+      break;
+    case "Subtle whistle":
+      score = Math.max(ratio(d.mouthPucker, 0.20), ratio(d.mouthFunnel, 0.18));
+      break;
+    default:
+      score = 0;
+  }
+
+  return Math.max(0, Math.min(1, score));
+}
 
 /**
  * Evaluates whether a FaceSignal satisfies one of the 12 expression recipes.
  */
 export function matchesAffectPrompt(label: string, signal: FaceSignal): boolean {
-  const d = signal.delta;
-  const s = signal.shapes;
-
-  switch (label) {
-    case "Mild disappointment":
-      return ((d.mouthFrownLeft ?? 0) + (d.mouthFrownRight ?? 0)) / 2 > 0.12 ||
-        ((d.mouthPressLeft ?? 0) + (d.mouthPressRight ?? 0)) / 2 > 0.16;
-    case "Performative surprise":
-      return (((d.eyeWideLeft ?? 0) + (d.eyeWideRight ?? 0)) / 2 > 0.14 && (d.jawOpen ?? 0) > 0.12) ||
-        (d.browInnerUp ?? 0) > 0.22;
-    case "Raised eyebrow":
-      return Math.max(d.browOuterUpLeft ?? 0, d.browOuterUpRight ?? 0) > 0.18;
-    case "Visible tongue":
-      return (s.tongueOut ?? 0) > 0.22 || (d.tongueOut ?? 0) > 0.20;
-    case "Regulated smile":
-      return ((d.mouthSmileLeft ?? 0) + (d.mouthSmileRight ?? 0)) / 2 > 0.22;
-    case "Bureaucratic suspicion":
-      return ((d.eyeSquintLeft ?? 0) + (d.eyeSquintRight ?? 0)) / 2 > 0.16 ||
-        ((d.browDownLeft ?? 0) + (d.browDownRight ?? 0)) / 2 > 0.16;
-    case "Inflated cheeks":
-      return (d.cheekPuff ?? 0) > 0.20;
-    case "Silent yawn":
-      return (d.jawOpen ?? 0) > 0.26;
-    case "Polite disapproval":
-      return (d.mouthPucker ?? 0) > 0.20 ||
-        ((d.noseSneerLeft ?? 0) + (d.noseSneerRight ?? 0)) / 2 > 0.14;
-    case "Sudden realization":
-      return (d.browInnerUp ?? 0) > 0.18 && (d.jawOpen ?? 0) > 0.10;
-    case "Skeptical scowl":
-      return ((d.browDownLeft ?? 0) + (d.browDownRight ?? 0)) / 2 > 0.16;
-    case "Subtle whistle":
-      return (d.mouthPucker ?? 0) > 0.20 || (d.mouthFunnel ?? 0) > 0.18;
-    default:
-      return false;
-  }
+  return computeAffectProximity(label, signal) >= 1;
 }
 
 /**
@@ -53,6 +92,8 @@ export class AffectDemoChallenge implements Challenge<FaceSignal> {
   private slotDurationMs = 3_000;
   private slotElapsedMs = 0;
   private holdMs = 0;
+  private proximity = 0;
+  private lockFlashMs = 0;
   private matchedCount = 0;
   private promptQueue: string[] = [];
   private calloutPool: readonly string[] = ["INSUFFICIENT DISAPPOINTMENT"];
@@ -65,6 +106,8 @@ export class AffectDemoChallenge implements Challenge<FaceSignal> {
     this.durationMs = Math.max(1_000, ctx.durationMs);
     this.slotElapsedMs = 0;
     this.holdMs = 0;
+    this.proximity = 0;
+    this.lockFlashMs = 0;
     this.matchedCount = 0;
     this.status = "running";
     this.callout = undefined;
@@ -92,6 +135,9 @@ export class AffectDemoChallenge implements Challenge<FaceSignal> {
     const clampedDt = Math.min(80, Math.max(1, dtMs));
     this.elapsedMs += clampedDt;
     this.slotElapsedMs += clampedDt;
+    if (this.lockFlashMs > 0) {
+      this.lockFlashMs = Math.max(0, this.lockFlashMs - clampedDt);
+    }
 
     const currentPrompt = this.promptQueue[this.matchedCount];
     if (!currentPrompt) {
@@ -99,12 +145,16 @@ export class AffectDemoChallenge implements Challenge<FaceSignal> {
       return;
     }
 
-    if (matchesAffectPrompt(currentPrompt, signal)) {
+    this.proximity = computeAffectProximity(currentPrompt, signal);
+
+    if (this.proximity >= 1) {
       this.holdMs += clampedDt;
       if (this.holdMs >= HOLD_REQUIRED_MS) {
         this.matchedCount += 1;
         this.holdMs = 0;
+        this.proximity = 0;
         this.slotElapsedMs = 0;
+        this.lockFlashMs = FLASH_DURATION_MS;
         if (this.matchedCount >= this.promptQueue.length) {
           this.status = "passed";
           return;
@@ -126,6 +176,7 @@ export class AffectDemoChallenge implements Challenge<FaceSignal> {
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
     const prompt = this.getCurrentPrompt();
     const holdRatio = Math.min(1, this.holdMs / HOLD_REQUIRED_MS);
+    const isHolding = holdRatio > 0;
     const slotRemaining = Math.max(0, (this.slotDurationMs - this.slotElapsedMs) / 1000).toFixed(1);
 
     ctx.save();
@@ -133,7 +184,8 @@ export class AffectDemoChallenge implements Challenge<FaceSignal> {
     // Top HUD
     ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
     ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle = this.status === "failed" ? "#C92A2A" : "#E8590C";
+    ctx.fillStyle =
+      this.status === "failed" ? "#C92A2A" : this.lockFlashMs > 0 ? "#51CF66" : "#E8590C";
     ctx.fillRect(0, 40, vp.width * progress, 4);
 
     ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -153,31 +205,47 @@ export class AffectDemoChallenge implements Challenge<FaceSignal> {
     if (prompt) {
       const margin = 16;
       const boxW = vp.width - margin * 2;
-      const boxH = 82;
+      const boxH = 88;
       const boxY = vp.height - boxH - margin;
 
       ctx.fillStyle = "rgba(26, 29, 30, 0.9)";
       ctx.fillRect(margin, boxY, boxW, boxH);
-      ctx.strokeStyle = holdRatio > 0 ? "#2B8A3E" : "rgba(246, 247, 244, 0.3)";
+      ctx.strokeStyle =
+        this.lockFlashMs > 0 || isHolding
+          ? "#51CF66"
+          : this.proximity > 0.35
+            ? "#E8590C"
+            : "rgba(246, 247, 244, 0.3)";
       ctx.lineWidth = 2;
       ctx.strokeRect(margin + 1, boxY + 1, boxW - 2, boxH - 2);
 
-      ctx.fillStyle = "#D4D8DA";
+      ctx.fillStyle = isHolding ? "#51CF66" : "#D4D8DA";
       ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.textAlign = "center";
-      ctx.fillText(`DEMONSTRATE PROMPT ${this.matchedCount + 1}`, vp.width / 2, boxY + 20);
+      ctx.fillText(
+        isHolding
+          ? `HOLD EXPRESSION · PROMPT ${this.matchedCount + 1}`
+          : `DEMONSTRATE PROMPT ${this.matchedCount + 1}`,
+        vp.width / 2,
+        boxY + 20,
+      );
 
       ctx.fillStyle = "#F6F7F4";
       ctx.font = "700 20px system-ui, -apple-system, sans-serif";
-      ctx.fillText(prompt, vp.width / 2, boxY + 46);
+      ctx.fillText(prompt, vp.width / 2, boxY + 46, boxW - 32);
 
-      // Hold verification meter
+      // Dual-stage meter: amber live proximity before threshold, green hold-lock once matched
       const barW = Math.min(240, boxW - 48);
       const barX = (vp.width - barW) / 2;
       ctx.fillStyle = "rgba(246, 247, 244, 0.2)";
-      ctx.fillRect(barX, boxY + 66, barW, 6);
-      ctx.fillStyle = "#51CF66";
-      ctx.fillRect(barX, boxY + 66, barW * holdRatio, 6);
+      ctx.fillRect(barX, boxY + 68, barW, 8);
+      if (isHolding) {
+        ctx.fillStyle = "#51CF66";
+        ctx.fillRect(barX, boxY + 68, barW * holdRatio, 8);
+      } else {
+        ctx.fillStyle = "#E8590C";
+        ctx.fillRect(barX, boxY + 68, barW * this.proximity, 8);
+      }
     }
 
     ctx.restore();
@@ -186,9 +254,14 @@ export class AffectDemoChallenge implements Challenge<FaceSignal> {
   getResult(): ChallengeResult {
     const total = Math.max(1, this.promptQueue.length);
     const progress = this.status === "passed" ? 1 : Math.min(0.99, this.matchedCount / total);
+    const res: ChallengeResult = {
+      status: this.status,
+      progress,
+      milestones: this.matchedCount,
+    };
     if (this.callout !== undefined) {
-      return { status: this.status, progress, callout: this.callout };
+      res.callout = this.callout;
     }
-    return { status: this.status, progress };
+    return res;
   }
 }

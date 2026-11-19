@@ -25,6 +25,66 @@ function toUtcMidnightMs(ms: number): number {
 }
 
 /**
+ * Returns milliseconds remaining until the next 00:00:00 UTC rollover (1..86_400_000).
+ */
+export function getMsUntilNextUtcDay(nowMs = Date.now()): number {
+  const nextMidnight = toUtcMidnightMs(nowMs) + MS_PER_DAY;
+  return Math.max(0, nextMidnight - nowMs);
+}
+
+interface DurationFormatLike {
+  format(duration: { hours: number; minutes: number; seconds: number }): string;
+}
+
+type IntlWithDurationFormat = typeof Intl & {
+  DurationFormat?: new (
+    locales?: string,
+    options?: { style?: string; hoursDisplay?: string },
+  ) => DurationFormatLike;
+};
+
+let digitalFormatter: DurationFormatLike | null | undefined;
+
+function getDigitalDurationFormatter(): DurationFormatLike | null {
+  if (digitalFormatter !== undefined) return digitalFormatter;
+  const Ctor =
+    typeof Intl !== "undefined" ? (Intl as IntlWithDurationFormat).DurationFormat : undefined;
+  if (!Ctor) {
+    digitalFormatter = null;
+    return null;
+  }
+  try {
+    digitalFormatter = new Ctor("en-US", { style: "digital", hoursDisplay: "always" });
+  } catch {
+    digitalFormatter = null;
+  }
+  return digitalFormatter;
+}
+
+/**
+ * Formats remaining milliseconds as a zero-padded HH:MM:SS digital countdown,
+ * using Intl.DurationFormat when available.
+ */
+export function formatUtcCountdown(remainingMs: number): string {
+  const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+
+  const fmt = getDigitalDurationFormatter();
+  if (fmt) {
+    const formatted = fmt.format({ hours, minutes, seconds });
+    // Ensure two-digit leading hours (e.g. "04:12:09") for tabular alignment
+    return formatted.replace(/^(\d):/, "0$1:");
+  }
+
+  const hh = String(hours).padStart(2, "0");
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+/**
  * Deterministically picks the challenge for `dayNumber` from `active`,
  * re-rolling once whenever a pick would repeat the previous day's challenge.
  */

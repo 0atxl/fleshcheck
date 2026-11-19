@@ -40,12 +40,6 @@ export function clipExtensionForMime(mimeType: string): "mp4" | "webm" {
   return mimeType.includes("mp4") ? "mp4" : "webm";
 }
 
-export function isClipRecordingSupported(): boolean {
-  if (typeof HTMLCanvasElement === "undefined") return false;
-  if (typeof HTMLCanvasElement.prototype.captureStream !== "function") return false;
-  return pickSupportedClipMime() !== null;
-}
-
 /**
  * Records an entire active round from chunk #0 to verdict so MP4/WebM container
  * headers remain valid across every recorded clip.
@@ -140,10 +134,21 @@ export class RoundClipRecorder {
       }
     }
 
-    return Promise.race([
-      pending,
-      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 1_500)),
-    ]);
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const timedOut = new Promise<null>((resolve) => {
+      timeoutId = globalThis.setTimeout(() => {
+        this.abort();
+        resolve(null);
+      }, 1_500);
+    });
+
+    try {
+      return await Promise.race([pending, timedOut]);
+    } finally {
+      if (timeoutId !== undefined) {
+        globalThis.clearTimeout(timeoutId);
+      }
+    }
   }
 
   abort(): void {

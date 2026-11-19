@@ -37,7 +37,11 @@ export const UI_COPY = {
   privacyNotice: "100% on-device inspection. Zero video frames leave your browser.",
   noFleshTitle: "Verification failed: no flesh detected.",
   noFleshBody: "No live camera feed was provided to the clerk.",
+  engineErrorTitle: "Verification failed: inspection booth offline.",
+  engineErrorBody: "The on-device biometric runtime could not initialize in this browser.",
   webViewHint: "In-app browsers block camera access. Tap the menu and choose Open in browser.",
   caseFileEmpty: "No file on record.",
   colleagueBanner: (pct: number) => `A colleague scored ${pct}% human. Do better.`,
+  nextCaseCountdown: (hhmmss: string) => `Next case opens in ${hhmmss} UTC.`,
+  newCaseReady: (dayStr: string) => `Case #${dayStr} is now open for inspection.`,
 } as const;

@@ -4,11 +4,13 @@ import { coverRect } from "../vision/geometry";
 import type { FaceTracker } from "../vision/tracker";
 import { drawFaceWireframe } from "../vision/wireframe";
 import { computeHumanPct } from "./scoring";
-import type { Baseline, Challenge, ChallengeManifest, Point2D, TryRecord, Viewport } from "./types";
+import type { Baseline, Challenge, ChallengeManifest, TryRecord, Viewport } from "./types";
+
+const FAIL_SHAKE_MS = 240;
+const HAVE_CURRENT_DATA = 2;
 
 export type GamePhase =
   | "IDLE"
-  | "LOADING"
   | "CALIBRATING"
   | "ACTIVE"
   | "PAUSED"
@@ -22,40 +24,41 @@ export interface LoopVerdict {
   elapsedMs: number;
   durationMs: number;
   snapshot: HTMLCanvasElement;
-  landmarks: Point2D[];
   roundRecords?: TryRecord[];
 }
 
 export interface LoopCallbacks {
   onPhaseChange(phase: GamePhase): void;
   onRoundActive?(canvas: HTMLCanvasElement): void;
-  onPauseUsed?(count: number): void;
   onVerdict(verdict: LoopVerdict): void;
   playAlertBeep?(): void;
   playStampThud?(): void;
   playPassChime?(): void;
   playRoundAdvance?(): void;
+  playMilestone?(): void;
 }
 
 /**
  * Single requestAnimationFrame loop driving video rendering, calibration,
- * pause-on-loss logic, challenge physics, and freeze-frame capture.
+ * pause-on-loss logic, challenge physics, fail impact shake, and freeze-frame capture.
  */
 export class GameLoop {
   private phase: GamePhase = "IDLE";
   private rafId = 0;
   private lastFrameMs = 0;
+  private activeElapsedMs = 0;
   private pausesUsed = 0;
   private pausedBefore = false;
   private challenge: Challenge | null = null;
   private baseline: Baseline | null = null;
   private calibration = new CalibrationCollector(CALIBRATION_MS);
   private shakeRemainingMs = 0;
+  private pendingVerdict: LoopVerdict | null = null;
   private readonly snapshotCanvas: HTMLCanvasElement;
   private readonly firstSubFailCanvas: HTMLCanvasElement;
   private hasSubFailSnapshot = false;
   private seenSubRounds = 0;
-  private latestLandmarks: Point2D[] = [];
+  private seenMilestones = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -72,14 +75,16 @@ export class GameLoop {
 
   start(): void {
     this.stop();
+    this.activeElapsedMs = 0;
     this.pausesUsed = 0;
     this.pausedBefore = false;
     this.shakeRemainingMs = 0;
-    this.latestLandmarks = [];
+    this.pendingVerdict = null;
     this.challenge = null;
     this.baseline = null;
     this.hasSubFailSnapshot = false;
     this.seenSubRounds = 0;
+    this.seenMilestones = 0;
     this.calibration = new CalibrationCollector(CALIBRATION_MS);
     this.tracker.resetLoss();
     this.setPhase("CALIBRATING");
@@ -88,6 +93,8 @@ export class GameLoop {
   }
 
   stop(): void {
+    this.pendingVerdict = null;
+    this.shakeRemainingMs = 0;
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
       this.rafId = 0;
@@ -115,16 +122,27 @@ export class GameLoop {
     if (!ctx) return;
 
     const vp: Viewport = { width: this.canvas.width, height: this.canvas.height };
+
+    // Brief frozen impact shake after a failed verdict before switching to evidence card
+    if (this.phase === "VERDICT" && this.pendingVerdict) {
+      this.shakeRemainingMs = Math.max(0, this.shakeRemainingMs - dtMs);
+      this.drawFailImpactFrame(ctx, vp);
+      if (this.shakeRemainingMs <= 0) {
+        const verdict = this.pendingVerdict;
+        this.pendingVerdict = null;
+        this.rafId = 0;
+        this.callbacks.onVerdict(verdict);
+        return;
+      }
+      this.rafId = requestAnimationFrame(this.tick);
+      return;
+    }
+
     const rect = coverRect(this.video.videoWidth || vp.width, this.video.videoHeight || vp.height, vp.width, vp.height);
 
     // Draw mirrored camera feed
     ctx.save();
-    if (this.shakeRemainingMs > 0 && !this.reducedMotion) {
-      this.shakeRemainingMs = Math.max(0, this.shakeRemainingMs - dtMs);
-      const amp = (this.shakeRemainingMs / 240) * 8;
-      ctx.translate((Math.random() - 0.5) * amp * 2, (Math.random() - 0.5) * amp * 2);
-    }
-    if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    if (this.video.readyState >= HAVE_CURRENT_DATA) {
       ctx.save();
       ctx.translate(rect.ox + rect.dw, rect.oy);
       ctx.scale(-1, 1);
@@ -138,7 +156,6 @@ export class GameLoop {
     const frame = this.tracker.step(this.video, nowMs, dtMs, rect, this.baseline, true);
 
     if (frame.signal.tracked) {
-      this.latestLandmarks = frame.signal.landmarks;
       drawFaceWireframe(ctx, frame.signal.landmarks);
     }
 
@@ -148,6 +165,7 @@ export class GameLoop {
           shapes: frame.rawShapes,
           nose: frame.rawNose,
           rollRad: frame.rawRoll,
+          ...(frame.rawEyeRoll !== undefined ? { eyeRollRad: frame.rawEyeRoll } : {}),
           yawRad: frame.rawYaw,
           pitchRad: frame.rawPitch,
         });
@@ -172,7 +190,7 @@ export class GameLoop {
         if (!this.pausedBefore) {
           this.pausedBefore = true;
           this.pausesUsed += 1;
-          this.callbacks.onPauseUsed?.(this.pausesUsed);
+          this.challenge?.onPause?.();
           this.callbacks.playAlertBeep?.();
           if (this.pausesUsed > MAX_PAUSES_PER_TRY) {
             this.finishVerdict(ctx, vp, false, "UNTRACKED SUBJECT");
@@ -188,13 +206,16 @@ export class GameLoop {
           this.setPhase("ACTIVE");
         }
         if (this.challenge) {
+          this.activeElapsedMs += Math.min(80, Math.max(0, dtMs));
           this.challenge.update(dtMs, frame.signal);
           this.challenge.draw(ctx, vp);
 
           const res = this.challenge.getResult();
+          let advancedSubRound = false;
           if (res.roundRecords && res.roundRecords.length > this.seenSubRounds) {
             const latestRound = res.roundRecords[res.roundRecords.length - 1];
             this.seenSubRounds = res.roundRecords.length;
+            advancedSubRound = true;
             if (latestRound && !latestRound.passed) {
               if (!this.hasSubFailSnapshot) {
                 this.firstSubFailCanvas.width = vp.width;
@@ -202,9 +223,18 @@ export class GameLoop {
                 this.firstSubFailCanvas.getContext("2d")?.drawImage(this.canvas, 0, 0);
                 this.hasSubFailSnapshot = true;
               }
-              this.callbacks.playStampThud?.();
-            } else {
+              if (res.status === "running") {
+                this.callbacks.playStampThud?.();
+              }
+            } else if (res.status === "running") {
               this.callbacks.playRoundAdvance?.();
+            }
+          }
+
+          if (res.milestones !== undefined && res.milestones > this.seenMilestones) {
+            this.seenMilestones = res.milestones;
+            if (res.status === "running" && !advancedSubRound) {
+              this.callbacks.playMilestone?.();
             }
           }
 
@@ -250,30 +280,58 @@ export class GameLoop {
     }
 
     if (!passed) {
-      this.shakeRemainingMs = this.reducedMotion ? 0 : 240;
       this.callbacks.playStampThud?.();
     } else {
       this.callbacks.playPassChime?.();
     }
 
-    // Draw verdict banner on live canvas briefly while frozen
-    ctx.save();
-    ctx.fillStyle = passed ? "rgba(43, 138, 62, 0.25)" : "rgba(201, 42, 42, 0.25)";
-    ctx.fillRect(0, 0, vp.width, vp.height);
-    ctx.restore();
-
-    this.setPhase("VERDICT");
-    this.callbacks.onVerdict({
+    const elapsedMs = Math.min(this.manifest.durationMs, Math.round(this.activeElapsedMs));
+    const verdict: LoopVerdict = {
       passed,
       pct,
       paused: this.pausesUsed > 0,
       callout,
-      elapsedMs: Math.round(res.progress * this.manifest.durationMs),
+      elapsedMs,
       durationMs: this.manifest.durationMs,
       snapshot: this.snapshotCanvas,
-      landmarks: this.latestLandmarks,
       ...(res.roundRecords ? { roundRecords: res.roundRecords } : {}),
-    });
+    };
+
+    this.setPhase("VERDICT");
+
+    if (!passed && !this.reducedMotion) {
+      this.shakeRemainingMs = FAIL_SHAKE_MS;
+      this.pendingVerdict = verdict;
+      this.drawFailImpactFrame(ctx, vp);
+      this.rafId = requestAnimationFrame(this.tick);
+      return;
+    }
+
+    // Draw verdict tint on live canvas briefly while frozen
+    ctx.save();
+    ctx.fillStyle = passed ? "rgba(35, 112, 50, 0.25)" : "rgba(201, 42, 42, 0.25)";
+    ctx.fillRect(0, 0, vp.width, vp.height);
+    ctx.restore();
+
+    this.rafId = 0;
+    this.callbacks.onVerdict(verdict);
+  }
+
+  private drawFailImpactFrame(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+    const amp = (this.shakeRemainingMs / FAIL_SHAKE_MS) * 8;
+    const ox = (Math.random() - 0.5) * amp * 2;
+    const oy = (Math.random() - 0.5) * amp * 2;
+
+    ctx.save();
+    ctx.fillStyle = "#1A1D1E";
+    ctx.fillRect(0, 0, vp.width, vp.height);
+    ctx.translate(ox, oy);
+    if (this.snapshotCanvas.width > 0) {
+      ctx.drawImage(this.snapshotCanvas, 0, 0);
+    }
+    ctx.fillStyle = "rgba(201, 42, 42, 0.24)";
+    ctx.fillRect(0, 0, vp.width, vp.height);
+    ctx.restore();
   }
 
   private drawCalibrationOverlay(

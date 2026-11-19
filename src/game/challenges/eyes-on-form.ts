@@ -1,7 +1,10 @@
+import type { BlendshapeMap } from "../../vision/blendshapes";
 import { mulberry32, shuffleWithRng } from "../prng";
 import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Viewport } from "../types";
+import { drawWrappedText } from "./hud";
 
 const GAZE_THRESHOLD = 0.28;
+const HEAD_YAW_THRESHOLD_RAD = 0.24; // ~14° head turn away from center form
 const GAZE_HOLD_MS = 300;
 
 interface EdgePopup {
@@ -12,15 +15,17 @@ interface EdgePopup {
 }
 
 /**
- * Computes mirrored screen-space horizontal gaze deltas from calibrated baseline.
- * Screen-left corresponds to subject's right eye looking out + left eye looking in.
+ * Computes screen-space horizontal gaze deltas from calibrated baseline.
+ * On unmirrored camera input, MediaPipe *Left/*Right blendshapes are anatomical
+ * to the subject: looking toward the left edge of the screen moves the subject's
+ * left eye outward (eyeLookOutLeft) and right eye inward (eyeLookInRight).
  */
-export function computeHorizontalGaze(delta: Record<string, number>): {
+export function computeHorizontalGaze(delta: BlendshapeMap): {
   lookLeft: number;
   lookRight: number;
 } {
-  const lookLeft = ((delta.eyeLookOutRight ?? 0) + (delta.eyeLookInLeft ?? 0)) / 2;
-  const lookRight = ((delta.eyeLookOutLeft ?? 0) + (delta.eyeLookInRight ?? 0)) / 2;
+  const lookLeft = ((delta.eyeLookOutLeft ?? 0) + (delta.eyeLookInRight ?? 0)) / 2;
+  const lookRight = ((delta.eyeLookOutRight ?? 0) + (delta.eyeLookInLeft ?? 0)) / 2;
   return { lookLeft, lookRight };
 }
 
@@ -34,6 +39,7 @@ export class EyesOnFormChallenge implements Challenge<FaceSignal> {
   private callout: string | undefined;
   private calloutPool: readonly string[] = ["ATTENTION LEAK"];
   private seed = 1;
+  private baselineYaw = 0;
 
   private popups: EdgePopup[] = [];
   private leakMs = 0;
@@ -45,6 +51,7 @@ export class EyesOnFormChallenge implements Challenge<FaceSignal> {
     this.status = "running";
     this.callout = undefined;
     this.seed = ctx.seed;
+    this.baselineYaw = ctx.baseline.yawRad;
     this.leakMs = 0;
     this.lastLeakSide = null;
 
@@ -83,6 +90,8 @@ export class EyesOnFormChallenge implements Challenge<FaceSignal> {
 
     const active = this.getActivePopup();
     const { lookLeft, lookRight } = computeHorizontalGaze(signal.delta);
+    const headYawDelta = signal.pose.yaw - this.baselineYaw;
+    const turnedHeadAway = Math.abs(headYawDelta) > HEAD_YAW_THRESHOLD_RAD;
 
     const lookedAtActive =
       active !== null &&
@@ -92,6 +101,9 @@ export class EyesOnFormChallenge implements Challenge<FaceSignal> {
     if (lookedAtActive && active) {
       this.leakMs += clampedDt;
       this.lastLeakSide = active.side;
+    } else if (turnedHeadAway) {
+      this.leakMs += clampedDt;
+      this.lastLeakSide = active ? active.side : headYawDelta < 0 ? "left" : "right";
     } else if (Math.max(lookLeft, lookRight) > GAZE_THRESHOLD + 0.08) {
       this.leakMs += clampedDt * 0.7;
       this.lastLeakSide = lookLeft >= lookRight ? "left" : "right";
@@ -156,14 +168,14 @@ export class EyesOnFormChallenge implements Challenge<FaceSignal> {
       ctx.lineWidth = 3;
       ctx.strokeRect(px, py, popW, popH);
 
-      ctx.fillStyle = "#E8590C";
+      ctx.fillStyle = "#C2410C";
       ctx.font = "800 9px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.textAlign = "left";
       ctx.fillText("NOTICE", px + 10, py + 15);
 
       ctx.fillStyle = "#1A1D1E";
       ctx.font = "600 12px system-ui, -apple-system, sans-serif";
-      drawWrappedText(ctx, active.text, px + 10, py + 42, popW - 20, 15);
+      drawWrappedText(ctx, active.text, px + 10, py + 42, popW - 20, 15, 3);
     }
 
     // Top HUD
@@ -191,32 +203,5 @@ export class EyesOnFormChallenge implements Challenge<FaceSignal> {
       return { status: this.status, progress, callout: this.callout };
     }
     return { status: this.status, progress };
-  }
-}
-
-function drawWrappedText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  cy: number,
-  maxWidth: number,
-  lineHeight: number,
-): void {
-  const words = text.split(" ");
-  const lines: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    const probe = cur ? `${cur} ${w}` : w;
-    if (ctx.measureText(probe).width > maxWidth && cur) {
-      lines.push(cur);
-      cur = w;
-    } else {
-      cur = probe;
-    }
-  }
-  if (cur) lines.push(cur);
-  const startY = cy - ((lines.length - 1) * lineHeight) / 2;
-  for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i]!, x, startY + i * lineHeight);
   }
 }

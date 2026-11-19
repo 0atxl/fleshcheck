@@ -3,6 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#F6F7F4" />
+    <meta
+      name="description"
+      content="Daily 12-second on-device webcam compliance check from the Office of Biological Verification. Zero video frames leave your browser."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="fleshcheck — Office of Biological Verification" />
+    <meta
+      property="og:description"
+      content="Daily 12-second biometric compliance check. 100% on-device via WebAssembly. Zero upload."
+    />
+    <meta property="og:image" content="/og-card.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="fleshcheck Office of Biological Verification dossier card" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="fleshcheck — Office of Biological Verification" />
+    <meta
+      name="twitter:description"
+      content="Daily 12-second biometric compliance check. 100% on-device. Zero upload."
+    />
+    <meta name="twitter:image" content="/og-card.png" />
     <title>fleshcheck — Office of Biological Verification</title>
     <link
       rel="icon"
@@ -44,7 +66,7 @@
                 class="captcha-checkbox"
                 aria-describedby="privacy-notice"
               />
-              <span>Verify you are human</span>
+              <span id="verify-human-label">Verify you are human</span>
             </label>
             <div class="captcha-seal" aria-hidden="true">
               <svg class="seal-svg" viewBox="0 0 32 32" fill="none">
@@ -80,7 +102,7 @@
               aria-label="Live compliance camera inspection view"
             ></canvas>
             <div class="stage-controls">
-              <p class="stage-prompt" id="stage-status-note">Stay inside the camera frame.</p>
+              <p class="stage-prompt" id="stage-status-note" aria-live="polite">Stay inside the camera frame.</p>
               <button type="button" class="btn btn-quiet" id="abort-round">Cancel inspection</button>
             </div>
           </div>
@@ -88,7 +110,7 @@
 
         <section class="panel" id="panel-noflesh" hidden>
           <div class="noflesh-box">
-            <h2 class="noflesh-title" id="noflesh-title"></h2>
+            <h2 class="noflesh-title" id="noflesh-title" tabindex="-1"></h2>
             <p class="noflesh-body" id="noflesh-body"></p>
             <p class="webview-note" id="webview-note" hidden></p>
             <button type="button" class="btn btn-primary" id="retry-camera">Retry verification</button>
@@ -109,6 +131,7 @@
 
             <div class="action-bar">
               <button type="button" class="btn btn-accent" id="retry-try" hidden>Retry check</button>
+              <button type="button" class="btn btn-primary" id="share-native" hidden>Share evidence</button>
               <button type="button" class="btn btn-primary" id="download-png">Save evidence PNG</button>
               <button type="button" class="btn" id="download-clip" hidden>Save fail clip</button>
 
@@ -158,19 +181,24 @@
                 <span class="tip" role="status"></span>
               </span>
             </div>
+
+            <div class="next-case-row" id="next-case-row" hidden>
+              <span class="next-case-text" id="next-case-text"></span>
+              <button type="button" class="btn btn-quiet" id="reload-next-case" hidden>Load new case</button>
+            </div>
           </div>
         </section>
       </section>
     </main>
 
-    <dialog id="case-file-dialog" class="case-dialog" aria-labelledby="case-file-title">
+    <dialog id="case-file-dialog" class="case-dialog" closedby="any" aria-labelledby="case-file-title">
       <div class="dialog-inner">
         <div class="dialog-head">
           <div>
             <h2 class="dialog-title" id="case-file-title">PERSONNEL CASE FILE</h2>
             <div class="case-stats" id="case-file-stats"></div>
           </div>
-          <button type="button" class="btn btn-quiet" id="close-case-file">Close</button>
+          <button type="button" class="btn btn-quiet" id="close-case-file" autofocus>Close</button>
         </div>
         <ul class="folder-grid" id="case-folder-grid" role="list"></ul>
       </div>

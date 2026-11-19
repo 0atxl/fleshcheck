@@ -100,4 +100,43 @@ describe("scoring and case-file persistence", () => {
     expect(reloaded.isTodayFinished(9, 1)).toBe(true);
     expect(reloaded.getTodayDisplaySquares(9)).toEqual(roundSquares);
   });
+
+  it("drops stale streaks after missed days and sanitizes corrupted storage entries", () => {
+    const backing = new Map<string, string>();
+    const storage: StorageLike = {
+      getItem: (k) => backing.get(k) ?? null,
+      setItem: (k, v) => backing.set(k, v),
+    };
+
+    const store = new CaseFileStore(storage);
+    store.recordVerdict("POKER_FACE", 10, { passed: true, pct: 100, paused: false }, false);
+    expect(store.getEffectiveStreak(10)).toBe(1);
+    expect(store.getEffectiveStreak(11)).toBe(1);
+    expect(store.getEffectiveStreak(12)).toBe(0);
+
+    // Corrupted entries in localStorage must not inject NaN or malformed objects
+    backing.set(
+      "fleshcheck:v1",
+      JSON.stringify({
+        streak: -5,
+        lastDay: 10,
+        today: {
+          day: 10,
+          tries: [null, { passed: "yes", pct: 50 }, { passed: true, pct: 150, paused: false }],
+        },
+        departments: {
+          POKER_FACE: { tries: "bad", passes: 1, bestPct: Number.NaN },
+        },
+      }),
+    );
+    const sanitized = new CaseFileStore(storage);
+    expect(sanitized.getData().streak).toBe(0);
+    expect(sanitized.getTodayTries(10)).toEqual([{ passed: true, pct: 100, paused: false }]);
+    expect(sanitized.getDepartmentStatus("POKER_FACE")).toEqual({
+      verdict: "UNREVIEWED",
+      tries: 0,
+      passes: 0,
+      bestPct: 0,
+    });
+  });
 });

@@ -3,6 +3,7 @@ import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Point2D,
 
 const TARGET_DWELL_MS = 550;
 const TRAP_DWELL_MS = 320;
+const ENTRY_GRACE_MS = 650;
 
 interface CheckboxNode {
   x: number;
@@ -29,6 +30,7 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
   private boxes: CheckboxNode[] = [];
   private cursor: Point2D = { x: 320, y: 240 };
   private nextOrder = 0;
+  private tickFlashMs = 0;
   private targetCount = 3;
   private hitRadius = 42;
 
@@ -39,6 +41,7 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
     this.callout = undefined;
     this.seed = ctx.seed;
     this.nextOrder = 0;
+    this.tickFlashMs = 0;
     this.cursor = { ...ctx.baseline.nose };
 
     if (ctx.copy.callouts.length > 0) {
@@ -56,7 +59,7 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
 
     const w = ctx.viewport.width;
     const h = ctx.viewport.height;
-    const slots: Point2D[] = shuffleWithRng(
+    const candidateSlots: Point2D[] = shuffleWithRng(
       [
         { x: w * 0.28, y: h * 0.28 },
         { x: w * 0.72, y: h * 0.28 },
@@ -67,9 +70,18 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
       rng,
     );
 
+    // Never place a trap checkbox on or immediately adjacent to the calibrated resting nose
+    const safeTrapRadius = this.hitRadius * 1.6;
+    const trapSafeSlots = candidateSlots.filter(
+      (s) => Math.hypot(s.x - ctx.baseline.nose.x, s.y - ctx.baseline.nose.y) > safeTrapRadius,
+    );
+    const trapChosenSlots = trapSafeSlots.slice(0, trapCount);
+    const trapSet = new Set(trapChosenSlots);
+    const targetSlots = candidateSlots.filter((s) => !trapSet.has(s)).slice(0, this.targetCount);
+
     const nodes: CheckboxNode[] = [];
-    for (let i = 0; i < this.targetCount; i++) {
-      const slot = slots[i]!;
+    for (let i = 0; i < targetSlots.length; i++) {
+      const slot = targetSlots[i]!;
       nodes.push({
         x: slot.x,
         y: slot.y,
@@ -80,8 +92,8 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
         dwellMs: 0,
       });
     }
-    for (let j = 0; j < trapCount; j++) {
-      const slot = slots[this.targetCount + j]!;
+    for (let j = 0; j < trapChosenSlots.length; j++) {
+      const slot = trapChosenSlots[j]!;
       nodes.push({
         x: slot.x,
         y: slot.y,
@@ -111,6 +123,9 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
 
     const clampedDt = Math.min(80, Math.max(1, dtMs));
     this.elapsedMs += clampedDt;
+    if (this.tickFlashMs > 0) {
+      this.tickFlashMs = Math.max(0, this.tickFlashMs - clampedDt);
+    }
     this.cursor = { ...signal.nose };
 
     for (const box of this.boxes) {
@@ -120,6 +135,7 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
       const isHovering = dist <= this.hitRadius;
 
       if (box.trap) {
+        if (this.elapsedMs < ENTRY_GRACE_MS) continue;
         if (isHovering) {
           box.dwellMs += clampedDt;
           if (box.dwellMs >= TRAP_DWELL_MS) {
@@ -139,6 +155,7 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
           if (box.dwellMs >= TARGET_DWELL_MS) {
             box.checked = true;
             this.nextOrder += 1;
+            this.tickFlashMs = 220;
             if (this.nextOrder >= this.targetCount) {
               this.status = "passed";
               return;
@@ -225,7 +242,8 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
     // Top HUD
     ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
     ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle = this.status === "failed" ? "#C92A2A" : "#E8590C";
+    ctx.fillStyle =
+      this.status === "failed" ? "#C92A2A" : this.tickFlashMs > 0 ? "#51CF66" : "#E8590C";
     ctx.fillRect(0, 40, vp.width * progress, 4);
 
     ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -244,9 +262,10 @@ export class NoseCursorChallenge implements Challenge<FaceSignal> {
   getResult(): ChallengeResult {
     const progress =
       this.status === "passed" ? 1 : Math.min(0.99, this.nextOrder / Math.max(1, this.targetCount));
+    const res: ChallengeResult = { status: this.status, progress, milestones: this.nextOrder };
     if (this.callout !== undefined) {
-      return { status: this.status, progress, callout: this.callout };
+      res.callout = this.callout;
     }
-    return { status: this.status, progress };
+    return res;
   }
 }

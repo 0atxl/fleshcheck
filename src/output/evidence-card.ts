@@ -68,13 +68,18 @@ export function renderEvidenceCard(
   ctx.font = "700 15px ui-monospace, SFMono-Regular, Menlo, monospace";
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.fillText(input.callout.toUpperCase(), 24, CARD_HEIGHT - 54);
+  ctx.fillText(input.callout.toUpperCase(), 24, CARD_HEIGHT - 54, leftW - 48);
 
   const secSurvived = (input.elapsedMs / 1000).toFixed(1);
   const secTarget = (input.durationMs / 1000).toFixed(1);
   ctx.fillStyle = "#D4D8DA";
   ctx.font = "500 13px ui-monospace, SFMono-Regular, Menlo, monospace";
-  ctx.fillText(`DURATION: ${secSurvived}s / ${secTarget}s · FROZEN EVIDENCE FRAME`, 24, CARD_HEIGHT - 26);
+  ctx.fillText(
+    `DURATION: ${secSurvived}s / ${secTarget}s · FROZEN EVIDENCE FRAME`,
+    24,
+    CARD_HEIGHT - 26,
+    leftW - 48,
+  );
 
   // Vertical divider
   ctx.fillStyle = "#1A1D1E";
@@ -104,28 +109,28 @@ export function renderEvidenceCard(
   const replayNote = input.isReplay ? " · REPLAY" : "";
   ctx.fillStyle = "#5C6266";
   ctx.font = "600 14px ui-monospace, SFMono-Regular, Menlo, monospace";
-  ctx.fillText(`DEPARTMENT: ${input.department.toUpperCase()}`, rx, 146);
-  ctx.fillText(`CASE #${dayStr}${replayNote} · ${input.title.toUpperCase()}`, rx, 174);
+  ctx.fillText(`DEPARTMENT: ${input.department.toUpperCase()}`, rx, 146, rw);
+  ctx.fillText(`CASE #${dayStr}${replayNote} · ${input.title.toUpperCase()}`, rx, 174, rw);
 
   // Big % HUMAN readout
-  ctx.fillStyle = input.passed ? "#2B8A3E" : "#1A1D1E";
+  ctx.fillStyle = input.passed ? "#237032" : "#1A1D1E";
   ctx.font = "800 96px system-ui, -apple-system, sans-serif";
   ctx.fillText(`${input.pct}%`, rx, 290);
 
   ctx.fillStyle = "#1A1D1E";
   ctx.font = "700 24px ui-monospace, SFMono-Regular, Menlo, monospace";
-  ctx.fillText(input.passed ? "HUMAN · PROBATIONARY" : "HUMAN", rx, 344);
+  ctx.fillText(input.passed ? "HUMAN · PROBATIONARY" : "HUMAN", rx, 344, rw);
 
   // Try squares
   const squares = input.tries.map(formatTrySquare).join(" ");
   ctx.font = "28px system-ui, -apple-system, sans-serif";
-  ctx.fillText(squares || "—", rx, 408);
+  ctx.fillText(squares || "—", rx, 408, rw);
 
   // Angled rubber-ink stamp
   const rng = mulberry32(input.seed + input.pct);
   const stampList = input.passed ? STAMPS_PASS : STAMPS_REJECT;
   const stampText = stampList[Math.floor(rng() * stampList.length)]!;
-  drawStamp(ctx, stampText, rx + 260, 505, input.passed ? "#2B8A3E" : "#C92A2A");
+  drawStamp(ctx, stampText, rx + 260, 505, input.passed ? "#237032" : "#C92A2A");
 
   // Footer
   ctx.strokeStyle = "#C7CCC9";
@@ -169,7 +174,7 @@ function drawStamp(
   ctx.fillStyle = color;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(text, 0, 1);
+  ctx.fillText(text, 0, 1, boxW - 24);
 
   ctx.restore();
 }

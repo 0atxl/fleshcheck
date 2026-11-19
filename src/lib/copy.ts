@@ -73,7 +73,9 @@ function legacyCopy(text: string): boolean {
   const field = document.createElement("textarea");
   field.value = text;
   field.setAttribute("readonly", "");
-  field.style.cssText = "position:fixed;inset-block-start:0;opacity:0";
+  field.style.position = "fixed";
+  field.style.insetBlockStart = "0";
+  field.style.opacity = "0";
   document.body.append(field);
   field.select();
   try {

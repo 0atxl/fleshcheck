@@ -1,3 +1,5 @@
+import type { BlendshapeMap } from "../vision/blendshapes";
+
 export type ChallengeId =
   | "POKER_FACE"
   | "NOSE_SPOON"
@@ -36,9 +38,10 @@ export interface Viewport {
 }
 
 export interface Baseline {
-  shapes: Record<string, number>;
+  shapes: BlendshapeMap;
   nose: Point2D;
   rollRad: number;
+  eyeRollRad?: number;
   yawRad: number;
   pitchRad: number;
 }
@@ -50,7 +53,6 @@ export interface CopyBank {
   rules?: readonly string[];
   forms?: readonly string[];
   prompts?: readonly string[];
-  judgements?: readonly string[];
   questions?: readonly { text: string; answer: "yes" | "no" | "either" }[];
   checkboxes?: readonly { label: string; trap: boolean }[];
   popups?: readonly string[];
@@ -60,8 +62,8 @@ export interface CopyBank {
 export interface FaceSignal {
   t: number;
   tracked: boolean;
-  shapes: Record<string, number>;
-  delta: Record<string, number>;
+  shapes: BlendshapeMap;
+  delta: BlendshapeMap;
   nose: Point2D;
   mouth: Point2D;
   faceBox: Rect2D;
@@ -79,6 +81,7 @@ export interface ChallengeResult {
   status: "running" | "failed" | "passed";
   progress: number;
   callout?: string;
+  milestones?: number;
   roundRecords?: TryRecord[];
 }
 
@@ -95,6 +98,7 @@ export interface Challenge<S = FaceSignal> {
   update(dtMs: number, signal: S): void;
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void;
   getResult(): ChallengeResult;
+  onPause?(): void;
 }
 
 export interface ChallengeManifest {

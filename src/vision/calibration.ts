@@ -1,9 +1,11 @@
 import type { Baseline, Point2D } from "../game/types";
+import { type BlendshapeMap, type BlendshapeName } from "./blendshapes";
 
 export interface CalibrationSample {
-  shapes: Record<string, number>;
+  shapes: BlendshapeMap;
   nose: Point2D;
   rollRad: number;
+  eyeRollRad?: number;
   yawRad?: number;
   pitchRad?: number;
 }
@@ -13,12 +15,15 @@ export interface CalibrationSample {
  * downstream challenges evaluate relative change instead of fixed thresholds.
  */
 export class CalibrationCollector {
-  private readonly shapeSums: Record<string, number> = {};
+  private readonly shapeSums: BlendshapeMap = {};
   private noseSumX = 0;
   private noseSumY = 0;
   private rollSum = 0;
+  private eyeRollSum = 0;
+  private eyeRollWeight = 0;
   private yawSum = 0;
   private pitchSum = 0;
+  private totalWeight = 0;
   private count = 0;
   private elapsedMs = 0;
 
@@ -26,16 +31,24 @@ export class CalibrationCollector {
 
   addSample(dtMs: number, sample: CalibrationSample | null): void {
     if (!sample) return;
-    this.elapsedMs += Math.max(0, dtMs);
+    const clampedDt = Math.max(0, dtMs);
+    const weight = Math.max(1, clampedDt);
+    this.elapsedMs += clampedDt;
     this.count += 1;
-    this.noseSumX += sample.nose.x;
-    this.noseSumY += sample.nose.y;
-    this.rollSum += sample.rollRad;
-    this.yawSum += sample.yawRad ?? 0;
-    this.pitchSum += sample.pitchRad ?? 0;
+    this.totalWeight += weight;
+    this.noseSumX += sample.nose.x * weight;
+    this.noseSumY += sample.nose.y * weight;
+    this.rollSum += sample.rollRad * weight;
+    if (sample.eyeRollRad !== undefined) {
+      this.eyeRollSum += sample.eyeRollRad * weight;
+      this.eyeRollWeight += weight;
+    }
+    this.yawSum += (sample.yawRad ?? 0) * weight;
+    this.pitchSum += (sample.pitchRad ?? 0) * weight;
 
-    for (const [key, val] of Object.entries(sample.shapes)) {
-      this.shapeSums[key] = (this.shapeSums[key] ?? 0) + val;
+    for (const [key, val] of Object.entries(sample.shapes) as [BlendshapeName, number | undefined][]) {
+      if (val === undefined) continue;
+      this.shapeSums[key] = (this.shapeSums[key] ?? 0) + val * weight;
     }
   }
 
@@ -49,20 +62,22 @@ export class CalibrationCollector {
   }
 
   finalize(): Baseline {
-    const n = Math.max(1, this.count);
-    const shapes: Record<string, number> = {};
-    for (const [key, sum] of Object.entries(this.shapeSums)) {
-      shapes[key] = sum / n;
+    const w = Math.max(1, this.totalWeight);
+    const shapes: BlendshapeMap = {};
+    for (const [key, sum] of Object.entries(this.shapeSums) as [BlendshapeName, number | undefined][]) {
+      if (sum === undefined) continue;
+      shapes[key] = sum / w;
     }
     return {
       shapes,
       nose: {
-        x: this.noseSumX / n,
-        y: this.noseSumY / n,
+        x: this.noseSumX / w,
+        y: this.noseSumY / w,
       },
-      rollRad: this.rollSum / n,
-      yawRad: this.yawSum / n,
-      pitchRad: this.pitchSum / n,
+      rollRad: this.rollSum / w,
+      ...(this.eyeRollWeight > 0 ? { eyeRollRad: this.eyeRollSum / this.eyeRollWeight } : {}),
+      yawRad: this.yawSum / w,
+      pitchRad: this.pitchSum / w,
     };
   }
 }
@@ -71,11 +86,12 @@ export class CalibrationCollector {
  * Computes raw blendshape scores minus calibrated neutral baseline.
  */
 export function computeBlendshapeDeltas(
-  shapes: Record<string, number>,
-  baselineShapes: Record<string, number>,
-): Record<string, number> {
-  const delta: Record<string, number> = {};
-  for (const [key, value] of Object.entries(shapes)) {
+  shapes: BlendshapeMap,
+  baselineShapes: BlendshapeMap,
+): BlendshapeMap {
+  const delta: BlendshapeMap = {};
+  for (const [key, value] of Object.entries(shapes) as [BlendshapeName, number | undefined][]) {
+    if (value === undefined) continue;
     delta[key] = value - (baselineShapes[key] ?? 0);
   }
   return delta;

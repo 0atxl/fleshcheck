@@ -9,6 +9,7 @@ import type {
   TryRecord,
   Viewport,
 } from "../types";
+import { drawWrappedText } from "./hud";
 
 const INTERMISSION_MS = 450;
 
@@ -23,7 +24,10 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
   private roundDurationMs = 4_000;
   private roundRecords: TryRecord[] = [];
   private roundProgresses: number[] = [];
+  private completedMilestones = 0;
+  private currentRoundPaused = false;
   private intermissionMs = 0;
+  private pendingIntermissionDraw = false;
   private lastRoundNote = "";
   private lastRoundPassed = false;
   private transitions: string[] = [];
@@ -39,7 +43,10 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
     this.roundIndex = 0;
     this.roundRecords = [];
     this.roundProgresses = [];
+    this.completedMilestones = 0;
+    this.currentRoundPaused = false;
     this.intermissionMs = 0;
+    this.pendingIntermissionDraw = false;
     this.lastRoundNote = "";
     this.lastRoundPassed = false;
     this.firstFailCallout = undefined;
@@ -65,12 +72,18 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
     return this.subManifests;
   }
 
+  onPause(): void {
+    this.currentRoundPaused = true;
+    this.activeChallenge?.onPause?.();
+  }
+
   private startRound(index: number): void {
     const manifest = this.subManifests[index];
     if (!manifest) {
       this.finalizeAudit();
       return;
     }
+    this.currentRoundPaused = false;
     const ch = manifest.create();
     ch.init({
       seed: (this.baseCtx.seed + (index + 1) * 7919) >>> 0,
@@ -88,6 +101,7 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
     const clampedDt = Math.min(80, Math.max(1, dtMs));
 
     if (this.intermissionMs > 0) {
+      this.pendingIntermissionDraw = false;
       this.intermissionMs = Math.max(0, this.intermissionMs - clampedDt);
       if (this.intermissionMs === 0) {
         this.roundIndex += 1;
@@ -109,9 +123,10 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
       this.roundRecords.push({
         passed,
         pct: computeHumanPct(subRes.progress, subRes.status),
-        paused: false,
+        paused: this.currentRoundPaused,
       });
       this.roundProgresses.push(passed ? 1 : subRes.progress);
+      this.completedMilestones += subRes.milestones ?? 0;
 
       if (!passed && !this.firstFailCallout) {
         this.firstFailCallout = subRes.callout ?? "STATION REJECTED";
@@ -123,6 +138,9 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
           this.transitions[this.roundIndex % this.transitions.length] ??
           "Forwarding dossier to next desk.";
         this.intermissionMs = INTERMISSION_MS;
+        // Defer the dark intermission curtain by one draw tick so GameLoop captures
+        // the unobstructed fail frame for the evidence card before masking it.
+        this.pendingIntermissionDraw = true;
       } else {
         this.finalizeAudit();
       }
@@ -142,7 +160,7 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
     const currentManifest = this.subManifests[this.roundIndex];
 
-    if (this.intermissionMs > 0) {
+    if (this.intermissionMs > 0 && !this.pendingIntermissionDraw) {
       ctx.save();
       ctx.fillStyle = "rgba(26, 29, 30, 0.84)";
       ctx.fillRect(0, 0, vp.width, vp.height);
@@ -154,15 +172,18 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
       ctx.fillText(
         `STATION ${this.roundIndex + 1} OF ${this.subManifests.length}: ${this.lastRoundPassed ? "CLEARED" : "REJECTED"}`,
         vp.width / 2,
-        vp.height / 2 - 14,
+        vp.height / 2 - 16,
+        vp.width - 32,
       );
 
       ctx.fillStyle = "#F6F7F4";
       ctx.font = "500 14px system-ui, -apple-system, sans-serif";
-      ctx.fillText(this.lastRoundNote, vp.width / 2, vp.height / 2 + 16);
+      drawWrappedText(ctx, this.lastRoundNote, vp.width / 2, vp.height / 2 + 18, vp.width - 48, 19, 2);
       ctx.restore();
       return;
     }
+
+    this.pendingIntermissionDraw = false;
 
     if (this.activeChallenge) {
       this.activeChallenge.draw(ctx, vp);
@@ -181,6 +202,7 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
       `AUDIT ${Math.min(this.roundIndex + 1, 3)}/3 · ${stationTitle}`,
       vp.width - 22,
       60,
+      180,
     );
     ctx.restore();
   }
@@ -188,8 +210,11 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
   getResult(): ChallengeResult {
     const count = Math.max(1, this.subManifests.length);
     let progressSum = this.roundProgresses.reduce((acc, v) => acc + v, 0);
+    let milestones = this.completedMilestones;
     if (this.status === "running" && this.activeChallenge && this.intermissionMs === 0) {
-      progressSum += this.activeChallenge.getResult().progress;
+      const activeRes = this.activeChallenge.getResult();
+      progressSum += activeRes.progress;
+      milestones += activeRes.milestones ?? 0;
     }
     const progress =
       this.status === "passed" ? 1 : Math.min(0.99, progressSum / count);
@@ -197,6 +222,7 @@ export class FullAuditChallenge implements Challenge<FaceSignal> {
     const res: ChallengeResult = {
       status: this.status,
       progress,
+      milestones,
       roundRecords: [...this.roundRecords],
     };
     if (this.status === "failed" && this.firstFailCallout) {

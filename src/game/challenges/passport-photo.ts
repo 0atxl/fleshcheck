@@ -103,7 +103,9 @@ export class PassportPhotoChallenge implements Challenge<FaceSignal> {
 
     if (this.affectFailMs >= AFFECT_HOLD_MS) {
       const rng = mulberry32(this.seed ^ Math.round(this.elapsedMs));
-      const affectVariants = this.calloutPool.filter((c) => !c.includes("EYES") && !c.includes("HEAD"));
+      const affectVariants = this.calloutPool.filter(
+        (c) => !/(EYES|EYELID|HEAD|POSTURE|CHIN)/.test(c),
+      );
       const pool = affectVariants.length > 0 ? affectVariants : this.calloutPool;
       this.failWith(pool[Math.floor(rng() * pool.length)] ?? "REJECTED: AFFECT");
       return;
@@ -180,10 +182,16 @@ export class PassportPhotoChallenge implements Challenge<FaceSignal> {
 
     ctx.textAlign = "left";
     ctx.font = "500 13px ui-monospace, SFMono-Regular, Menlo, monospace";
+    const maxRuleW = vp.width - margin * 2 - 28;
     for (let i = 0; i < visibleRules.length; i++) {
       const isNewest = i === visibleRules.length - 1;
       ctx.fillStyle = isNewest ? "#E8590C" : "#D4D8DA";
-      ctx.fillText(`RULE ${activeCount - visibleRules.length + i + 1}: ${visibleRules[i]!}`, margin + 14, boxY + 18 + i * rowH);
+      ctx.fillText(
+        `RULE ${activeCount - visibleRules.length + i + 1}: ${visibleRules[i]!}`,
+        margin + 14,
+        boxY + 18 + i * rowH,
+        maxRuleW,
+      );
     }
 
     ctx.restore();

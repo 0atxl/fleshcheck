@@ -1,5 +1,6 @@
 import { mulberry32, shuffleWithRng } from "../prng";
 import type { Challenge, ChallengeContext, ChallengeResult, FaceSignal, Viewport } from "../types";
+import { drawWrappedText } from "./hud";
 
 const SMILE_THRESHOLD = 0.16;
 const PUFF_THRESHOLD = 0.22;
@@ -36,7 +37,7 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
     const tier2 = shuffleWithRng(sourceTaunts.slice(third, third * 2), rng);
     const tier3 = shuffleWithRng(sourceTaunts.slice(third * 2), rng);
 
-    this.activeTaunts = [
+    const fullList = [
       tier1[0] ?? sourceTaunts[0]!,
       tier1[1] ?? tier1[0] ?? sourceTaunts[0]!,
       tier2[0] ?? sourceTaunts[0]!,
@@ -44,6 +45,7 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
       tier3[0] ?? sourceTaunts[0]!,
       tier3[1] ?? tier3[0] ?? sourceTaunts[0]!,
     ];
+    this.activeTaunts = this.durationMs <= 5_000 ? [fullList[2]!, fullList[4]!] : fullList;
 
     if (ctx.copy.callouts.length > 0) {
       this.calloutPool = ctx.copy.callouts;
@@ -53,7 +55,8 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
   update(dtMs: number, signal: FaceSignal): void {
     if (this.status !== "running" || !signal.tracked) return;
 
-    this.elapsedMs += Math.max(0, dtMs);
+    const clampedDt = Math.min(80, Math.max(1, dtMs));
+    this.elapsedMs += clampedDt;
 
     const smileLeft = signal.delta.mouthSmileLeft ?? 0;
     const smileRight = signal.delta.mouthSmileRight ?? 0;
@@ -70,9 +73,9 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
     this.leakRatio = Math.min(1.5, ratio);
 
     if (ratio >= 1) {
-      this.leakMs += dtMs;
+      this.leakMs += clampedDt;
     } else {
-      this.leakMs = Math.max(0, this.leakMs - dtMs * 1.5);
+      this.leakMs = Math.max(0, this.leakMs - clampedDt * 1.5);
     }
 
     if (this.leakMs >= LEAK_HOLD_MS) {
@@ -159,34 +162,5 @@ export class PokerFaceChallenge implements Challenge<FaceSignal> {
       return { status: this.status, progress, callout: this.callout };
     }
     return { status: this.status, progress };
-  }
-}
-
-function drawWrappedText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  cx: number,
-  cy: number,
-  maxWidth: number,
-  lineHeight: number,
-): void {
-  const words = text.split(" ");
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of words) {
-    const probe = current ? `${current} ${word}` : word;
-    if (ctx.measureText(probe).width > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = probe;
-    }
-  }
-  if (current) lines.push(current);
-
-  const startY = cy - ((lines.length - 1) * lineHeight) / 2;
-  for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i]!, cx, startY + i * lineHeight);
   }
 }

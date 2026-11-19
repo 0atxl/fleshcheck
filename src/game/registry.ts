@@ -136,3 +136,12 @@ export const CHALLENGES: ChallengeManifest[] = [
 ];
 
 export const ACTIVE_CHALLENGES: ChallengeManifest[] = CHALLENGES.filter((c) => c.enabled);
+
+/**
+ * Returns the challenge roster active for a given UTC day number.
+ * Pinning future roster expansions to their launch day prevents new challenges
+ * (e.g., Phase 5 hand tracking) from retroactively reshuffling historical ?day= links.
+ */
+export function getRosterForDay(_dayNumber: number): readonly ChallengeManifest[] {
+  return ACTIVE_CHALLENGES;
+}

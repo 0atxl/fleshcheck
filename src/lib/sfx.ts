@@ -23,7 +23,9 @@ export class ComplianceSfx {
 
   unlock(): void {
     if (this.muted || typeof window === "undefined") return;
-    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const Ctx =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctx) return;
     if (!this.ctx) {
       this.ctx = new Ctx();
@@ -34,46 +36,55 @@ export class ComplianceSfx {
   }
 
   playTick(): void {
-    this.tone(720, 0.035, "square", 0.04);
+    this.withRunningContext((ctx) => this.scheduleTone(ctx, 720, 0.035, "square", 0.04));
   }
 
   playCalibrateHum(): void {
-    this.tone(180, 0.25, "sine", 0.04, 240);
+    this.withRunningContext((ctx) => this.scheduleTone(ctx, 180, 0.25, "sine", 0.04, 240));
   }
 
   playAlertBeep(): void {
-    this.tone(540, 0.09, "triangle", 0.06);
+    this.withRunningContext((ctx) => this.scheduleTone(ctx, 540, 0.09, "triangle", 0.06));
   }
 
   playStampThud(): void {
-    if (this.muted) return;
-    const ctx = this.ensureContext();
-    if (!ctx) return;
+    this.withRunningContext((ctx) => {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.exponentialRampToValueAtTime(42, now + 0.18);
 
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "triangle";
-    osc.frequency.setValueAtTime(140, now);
-    osc.frequency.exponentialRampToValueAtTime(42, now + 0.18);
+      gain.gain.setValueAtTime(0.24, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
 
-    gain.gain.setValueAtTime(0.24, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.21);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.21);
+    });
   }
 
   playPassChime(): void {
-    this.tone(523.25, 0.09, "sine", 0.07);
-    window.setTimeout(() => this.tone(659.25, 0.14, "sine", 0.07), 90);
+    this.withRunningContext((ctx) => {
+      this.scheduleTone(ctx, 523.25, 0.09, "sine", 0.07, undefined, 0);
+      this.scheduleTone(ctx, 659.25, 0.14, "sine", 0.07, undefined, 0.09);
+    });
   }
 
   playRoundAdvance(): void {
-    this.tone(440, 0.06, "sine", 0.05);
-    window.setTimeout(() => this.tone(554.37, 0.08, "sine", 0.05), 65);
+    this.withRunningContext((ctx) => {
+      this.scheduleTone(ctx, 440, 0.06, "sine", 0.05, undefined, 0);
+      this.scheduleTone(ctx, 554.37, 0.08, "sine", 0.05, undefined, 0.065);
+    });
+  }
+
+  playMilestone(): void {
+    this.withRunningContext((ctx) => {
+      this.scheduleTone(ctx, 587.33, 0.045, "triangle", 0.045, undefined, 0);
+      this.scheduleTone(ctx, 783.99, 0.06, "sine", 0.045, undefined, 0.045);
+    });
   }
 
   close(): void {
@@ -83,39 +94,57 @@ export class ComplianceSfx {
     }
   }
 
-  private ensureContext(): AudioContext | null {
-    if (this.muted || typeof window === "undefined") return null;
+  /**
+   * Executes a sound callback immediately when running, or chains onto resume()
+   * so the very first click after unlocking audio is never silently dropped.
+   */
+  private withRunningContext(fn: (ctx: AudioContext) => void): void {
+    if (this.muted || typeof window === "undefined") return;
     if (!this.ctx) this.unlock();
-    if (!this.ctx || this.ctx.state !== "running") return null;
-    return this.ctx;
+    const ctx = this.ctx;
+    if (!ctx) return;
+
+    if (ctx.state === "running") {
+      fn(ctx);
+      return;
+    }
+    if (ctx.state === "suspended") {
+      ctx
+        .resume()
+        .then(() => {
+          if (!this.muted && this.ctx === ctx && ctx.state === "running") {
+            fn(ctx);
+          }
+        })
+        .catch(() => {});
+    }
   }
 
-  private tone(
+  private scheduleTone(
+    ctx: AudioContext,
     freq: number,
     durationSec: number,
     type: OscillatorType,
     volume: number,
     endFreq?: number,
+    delaySec = 0,
   ): void {
-    const ctx = this.ensureContext();
-    if (!ctx) return;
-
-    const now = ctx.currentTime;
+    const start = ctx.currentTime + delaySec;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = type;
-    osc.frequency.setValueAtTime(freq, now);
+    osc.frequency.setValueAtTime(freq, start);
     if (endFreq !== undefined) {
-      osc.frequency.linearRampToValueAtTime(endFreq, now + durationSec);
+      osc.frequency.linearRampToValueAtTime(endFreq, start + durationSec);
     }
 
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + durationSec);
+    gain.gain.setValueAtTime(volume, start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + durationSec);
 
     osc.connect(gain);
     gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + durationSec + 0.01);
+    osc.start(start);
+    osc.stop(start + durationSec + 0.01);
   }
 }
 

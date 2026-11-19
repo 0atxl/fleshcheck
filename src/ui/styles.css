@@ -6,8 +6,10 @@
   --ink-muted: #555b5e;
   --border: #c5cac6;
   --accent: #e8590c;
+  --accent-btn: #c2410c;
+  --accent-btn-hover: #b83d08;
   --reject: #c92a2a;
-  --pass: #2b8a3e;
+  --pass: #237032;
   --focus: #1a1d1e;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -445,6 +447,25 @@ body {
   font-size: 0.82rem;
 }
 
+.next-case-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+
+.next-case-row[hidden] {
+  display: none;
+}
+
 .action-bar {
   display: flex;
   flex-wrap: wrap;
@@ -484,13 +505,18 @@ body {
 }
 
 .btn-accent {
-  background: var(--accent);
+  background: var(--accent-btn);
   border-color: var(--ink);
   color: #ffffff;
 }
 
 .btn-accent:hover {
-  background: #d94e07;
+  background: var(--accent-btn-hover);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .btn-quiet {
@@ -573,6 +599,7 @@ body {
 .case-dialog {
   width: min(720px, calc(100% - 2rem));
   max-block-size: 85dvh;
+  overflow: auto;
   padding: 0;
   border: 2px solid var(--ink);
   background: var(--bg);
@@ -580,8 +607,14 @@ body {
   box-shadow: 6px 6px 0 var(--ink);
 }
 
+.case-dialog:modal {
+  overscroll-behavior: contain;
+}
+
 .case-dialog::backdrop {
   background: rgba(26, 29, 30, 0.55);
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 
 .dialog-inner {

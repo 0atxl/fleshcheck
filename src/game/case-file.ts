@@ -46,6 +46,47 @@ function getBrowserStorage(): StorageLike | null {
   return null;
 }
 
+const MAX_DISPLAY_SQUARES = 12;
+
+function sanitizeTryRecord(item: unknown): TryRecord | null {
+  if (!item || typeof item !== "object") return null;
+  const candidate = item as Record<string, unknown>;
+  if (typeof candidate.passed !== "boolean") return null;
+  if (typeof candidate.pct !== "number" || !Number.isFinite(candidate.pct)) return null;
+  return {
+    passed: candidate.passed,
+    pct: Math.max(0, Math.min(100, Math.round(candidate.pct))),
+    paused: Boolean(candidate.paused),
+  };
+}
+
+function sanitizeTryArray(arr: unknown, maxLen: number): TryRecord[] {
+  if (!Array.isArray(arr)) return [];
+  const out: TryRecord[] = [];
+  for (const item of arr) {
+    const clean = sanitizeTryRecord(item);
+    if (clean) out.push(clean);
+    if (out.length >= maxLen) break;
+  }
+  return out;
+}
+
+function sanitizeDepartments(
+  raw: unknown,
+): Partial<Record<ChallengeId, DepartmentStats>> {
+  if (!raw || typeof raw !== "object") return {};
+  const result: Partial<Record<ChallengeId, DepartmentStats>> = {};
+  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!val || typeof val !== "object") continue;
+    const rec = val as Record<string, unknown>;
+    const tries = typeof rec.tries === "number" && Number.isFinite(rec.tries) ? Math.max(0, Math.floor(rec.tries)) : 0;
+    const passes = typeof rec.passes === "number" && Number.isFinite(rec.passes) ? Math.max(0, Math.floor(rec.passes)) : 0;
+    const bestPct = typeof rec.bestPct === "number" && Number.isFinite(rec.bestPct) ? Math.max(0, Math.min(100, Math.round(rec.bestPct))) : 0;
+    result[key as ChallengeId] = { tries, passes, bestPct };
+  }
+  return result;
+}
+
 /**
  * Manages local persistence of department records, daily tries, and streak.
  * Safely degrades to in-memory state when localStorage is unavailable.
@@ -65,19 +106,25 @@ export class CaseFileStore {
       const raw = this.storage.getItem(STORAGE_KEY);
       if (!raw) return emptyData();
       const parsed = JSON.parse(raw) as Partial<CaseFileData>;
+      const displaySquares = sanitizeTryArray(parsed.today?.displaySquares, MAX_DISPLAY_SQUARES);
       return {
-        streak: typeof parsed.streak === "number" && parsed.streak >= 0 ? parsed.streak : 0,
-        lastDay: typeof parsed.lastDay === "number" && parsed.lastDay >= 0 ? parsed.lastDay : 0,
+        streak:
+          typeof parsed.streak === "number" && Number.isFinite(parsed.streak) && parsed.streak >= 0
+            ? Math.floor(parsed.streak)
+            : 0,
+        lastDay:
+          typeof parsed.lastDay === "number" && Number.isFinite(parsed.lastDay) && parsed.lastDay >= 0
+            ? Math.floor(parsed.lastDay)
+            : 0,
         today: {
-          day: typeof parsed.today?.day === "number" ? parsed.today.day : 0,
-          tries: Array.isArray(parsed.today?.tries) ? parsed.today.tries.slice(0, MAX_TRIES_PER_DAY) : [],
-          ...(Array.isArray(parsed.today?.displaySquares)
-            ? { displaySquares: parsed.today.displaySquares.slice(0, MAX_TRIES_PER_DAY) }
-            : {}),
+          day:
+            typeof parsed.today?.day === "number" && Number.isFinite(parsed.today.day)
+              ? Math.floor(parsed.today.day)
+              : 0,
+          tries: sanitizeTryArray(parsed.today?.tries, MAX_TRIES_PER_DAY),
+          ...(displaySquares.length > 0 ? { displaySquares } : {}),
         },
-        departments: parsed.departments && typeof parsed.departments === "object"
-          ? { ...parsed.departments }
-          : {},
+        departments: sanitizeDepartments(parsed.departments),
       };
     } catch {
       return emptyData();
@@ -96,6 +143,17 @@ export class CaseFileStore {
 
   getData(): CaseFileData {
     return this.memoryState;
+  }
+
+  /**
+   * Returns the live streak as of `todayDay`, dropping stale streaks when at
+   * least one full UTC day was missed.
+   */
+  getEffectiveStreak(todayDay: number): number {
+    const { streak, lastDay } = this.memoryState;
+    if (streak <= 0 || lastDay <= 0) return 0;
+    if (todayDay - lastDay > 1) return 0;
+    return streak;
   }
 
   getTodayTries(dayNumber: number): TryRecord[] {

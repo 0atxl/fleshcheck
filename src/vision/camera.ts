@@ -66,8 +66,16 @@ export async function requestCamera(videoEl?: HTMLVideoElement): Promise<CameraR
   video.srcObject = stream;
 
   try {
-    await waitForVideoFrame(video);
-    await video.play().catch(() => {});
+    // Initiate playback before waiting for decoded frames so detached <video>
+    // elements start decoding promptly on iOS Safari / mobile WebKit.
+    const playPromise = video.play().catch((err) => {
+      // Autoplay rejections on muted inline streams are rare, but surface real playback failure
+      return Promise.reject(err);
+    });
+    await Promise.all([waitForVideoFrame(video), playPromise.catch(() => {})]);
+    if (video.paused) {
+      await video.play();
+    }
     return { ok: true, stream, video };
   } catch {
     stopCamera(stream, video);
@@ -75,18 +83,20 @@ export async function requestCamera(videoEl?: HTMLVideoElement): Promise<CameraR
   }
 }
 
+const HAVE_CURRENT_DATA = 2;
+
 function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
-  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+  if (video.readyState >= HAVE_CURRENT_DATA && video.videoWidth > 0) {
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
+    const timeout = globalThis.setTimeout(() => {
       cleanup();
       reject(new Error("Camera frame timeout"));
     }, 8_000);
 
     const onLoaded = () => {
-      if (video.videoWidth > 0) {
+      if (video.videoWidth > 0 && video.readyState >= HAVE_CURRENT_DATA) {
         cleanup();
         resolve();
       }
@@ -96,12 +106,14 @@ function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
       reject(new Error("Video stream error"));
     };
     const cleanup = () => {
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
+      video.removeEventListener("loadedmetadata", onLoaded);
       video.removeEventListener("loadeddata", onLoaded);
       video.removeEventListener("playing", onLoaded);
       video.removeEventListener("error", onError);
     };
 
+    video.addEventListener("loadedmetadata", onLoaded);
     video.addEventListener("loadeddata", onLoaded);
     video.addEventListener("playing", onLoaded);
     video.addEventListener("error", onError);

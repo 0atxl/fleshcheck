@@ -108,6 +108,9 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
     const dtSec = clampedDt / 1000;
     this.elapsedMs += clampedDt;
     this.faceBox = signal.faceBox;
+    this.tooClose =
+      this.faceBox.w > this.viewport.width * 0.72 ||
+      this.faceBox.h > this.viewport.height * 0.78;
 
     const progress = this.elapsedMs / this.durationMs;
 
@@ -185,12 +188,6 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
   }
 
   draw(ctx: CanvasRenderingContext2D, vp: Viewport): void {
-    this.viewport = { ...vp };
-    this.clampToViewport(this.stamp, vp);
-    if (this.decoy) this.clampToViewport(this.decoy, vp);
-    this.tooClose =
-      this.faceBox.w > vp.width * 0.72 || this.faceBox.h > vp.height * 0.78;
-
     const progress = Math.min(1, this.elapsedMs / this.durationMs);
 
     ctx.save();
@@ -251,13 +248,15 @@ export class BotDodgeChallenge implements Challenge<FaceSignal> {
     ctx.restore();
 
     if (this.slowdownActive) {
-      ctx.fillStyle = "rgba(26, 29, 30, 0.8)";
-      ctx.fillRect(this.stamp.x, this.stamp.y - 22, this.stamp.w, 18);
+      const placeBelow = this.stamp.y < 70;
+      const labelY = placeBelow ? this.stamp.y + this.stamp.h + 4 : this.stamp.y - 22;
+      ctx.fillStyle = "rgba(26, 29, 30, 0.85)";
+      ctx.fillRect(this.stamp.x, labelY, this.stamp.w, 18);
       ctx.fillStyle = "#E8590C";
       ctx.font = "700 10px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("RECALCULATING", this.stamp.x + this.stamp.w / 2, this.stamp.y - 13);
+      ctx.fillText("RECALCULATING", this.stamp.x + this.stamp.w / 2, labelY + 9);
     }
 
     // Header HUD

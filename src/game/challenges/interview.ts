@@ -1,7 +1,10 @@
 import { mulberry32, shuffleWithRng } from "../prng";
 import type { Baseline, Challenge, ChallengeContext, ChallengeResult, FaceSignal, Viewport } from "../types";
+import { drawWrappedText } from "./hud";
 
-const SETTLE_GRACE_MS = 220;
+const SETTLE_GRACE_MS = 250;
+const NEUTRAL_RETURN_BAND_RAD = 0.12;
+const NEUTRAL_REARM_MAX_MS = 750;
 const NOISE_FLOOR_RAD = 0.008;
 const NOD_TRAVEL_THRESHOLD = 0.24;
 const SHAKE_TRAVEL_THRESHOLD = 0.28;
@@ -28,6 +31,10 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
   private baseline!: Baseline;
   private seed = 1;
 
+  private needsNeutralReturn = false;
+  private anchorLocked = false;
+  private anchorPitch = 0;
+  private anchorYaw = 0;
   private prevPitch: number | null = null;
   private prevYaw: number | null = null;
   private pitchTravel = 0;
@@ -35,6 +42,7 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
   private maxAbsPitch = 0;
   private maxAbsYaw = 0;
   private notedBannerMs = 0;
+  private ackFlashMs = 0;
 
   init(ctx: ChallengeContext): void {
     this.elapsedMs = 0;
@@ -46,7 +54,8 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
     this.baseline = ctx.baseline;
     this.seed = ctx.seed;
     this.notedBannerMs = 0;
-    this.resetMotionWindow();
+    this.ackFlashMs = 0;
+    this.resetMotionWindow(false);
 
     const count = this.durationMs <= 5_000 ? 2 : 5;
     this.slotDurationMs = this.durationMs / count;
@@ -64,7 +73,11 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
     return this.questions[this.answeredCount] ?? null;
   }
 
-  private resetMotionWindow(): void {
+  private resetMotionWindow(requireReturn: boolean): void {
+    this.needsNeutralReturn = requireReturn;
+    this.anchorLocked = !requireReturn;
+    this.anchorPitch = this.baseline?.pitchRad ?? 0;
+    this.anchorYaw = this.baseline?.yawRad ?? 0;
     this.prevPitch = null;
     this.prevYaw = null;
     this.pitchTravel = 0;
@@ -82,6 +95,9 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
     if (this.notedBannerMs > 0) {
       this.notedBannerMs = Math.max(0, this.notedBannerMs - clampedDt);
     }
+    if (this.ackFlashMs > 0) {
+      this.ackFlashMs = Math.max(0, this.ackFlashMs - clampedDt);
+    }
 
     const q = this.questions[this.answeredCount];
     if (!q) {
@@ -90,8 +106,32 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
     }
 
     if (this.slotElapsedMs >= SETTLE_GRACE_MS) {
-      const dPitch = signal.pose.pitch - this.baseline.pitchRad;
-      const dYaw = signal.pose.yaw - this.baseline.yawRad;
+      const fromBasePitch = signal.pose.pitch - this.baseline.pitchRad;
+      const fromBaseYaw = signal.pose.yaw - this.baseline.yawRad;
+
+      // Require head to settle back near neutral after answering the prior question
+      // so residual nod/shake recovery cannot false-trigger the next question.
+      if (this.needsNeutralReturn) {
+        const nearNeutral =
+          Math.abs(fromBasePitch) < NEUTRAL_RETURN_BAND_RAD &&
+          Math.abs(fromBaseYaw) < NEUTRAL_RETURN_BAND_RAD;
+        if (!nearNeutral && this.slotElapsedMs < NEUTRAL_REARM_MAX_MS) {
+          this.checkSlotTimeout();
+          return;
+        }
+        this.needsNeutralReturn = false;
+      }
+
+      if (!this.anchorLocked) {
+        this.anchorPitch =
+          this.baseline.pitchRad + clamp(fromBasePitch, -0.14, 0.14);
+        this.anchorYaw =
+          this.baseline.yawRad + clamp(fromBaseYaw, -0.14, 0.14);
+        this.anchorLocked = true;
+      }
+
+      const dPitch = signal.pose.pitch - this.anchorPitch;
+      const dYaw = signal.pose.yaw - this.anchorYaw;
 
       if (this.prevPitch !== null && this.prevYaw !== null) {
         const dp = Math.abs(dPitch - this.prevPitch);
@@ -115,8 +155,9 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
           this.notedBannerMs = 650;
         }
         this.answeredCount += 1;
+        this.ackFlashMs = 220;
         this.slotElapsedMs = 0;
-        this.resetMotionWindow();
+        this.resetMotionWindow(true);
         if (this.answeredCount >= this.questions.length) {
           this.status = "passed";
           return;
@@ -124,6 +165,10 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
       }
     }
 
+    this.checkSlotTimeout();
+  }
+
+  private checkSlotTimeout(): void {
     if (this.slotElapsedMs >= this.slotDurationMs) {
       this.status = "failed";
       const rng = mulberry32(this.seed ^ Math.round(this.elapsedMs));
@@ -157,7 +202,8 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
     // Top HUD
     ctx.fillStyle = "rgba(26, 29, 30, 0.72)";
     ctx.fillRect(0, 0, vp.width, 44);
-    ctx.fillStyle = this.status === "failed" ? "#C92A2A" : "#E8590C";
+    ctx.fillStyle =
+      this.status === "failed" ? "#C92A2A" : this.ackFlashMs > 0 ? "#51CF66" : "#E8590C";
     ctx.fillRect(0, 40, vp.width * progress, 4);
 
     ctx.font = "600 13px ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -174,10 +220,10 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
     ctx.fillText(`${slotRemaining}s`, vp.width - 16, 20);
 
     if (this.notedBannerMs > 0) {
-      ctx.fillStyle = "rgba(232, 89, 12, 0.9)";
+      ctx.fillStyle = "#E8590C";
       ctx.fillRect(vp.width / 2 - 110, 56, 220, 24);
-      ctx.fillStyle = "#FFFFFF";
-      ctx.font = "700 11px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.fillStyle = "#1A1D1E";
+      ctx.font = "800 11px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.textAlign = "center";
       ctx.fillText("ANSWER NOTED FOR THE FILE", vp.width / 2, 68);
     }
@@ -190,8 +236,8 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
 
       ctx.fillStyle = "rgba(26, 29, 30, 0.92)";
       ctx.fillRect(margin, boxY, boxW, boxH);
-      ctx.strokeStyle = "rgba(246, 247, 244, 0.25)";
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = this.ackFlashMs > 0 ? "#51CF66" : "rgba(246, 247, 244, 0.25)";
+      ctx.lineWidth = this.ackFlashMs > 0 ? 2 : 1;
       ctx.strokeRect(margin + 0.5, boxY + 0.5, boxW - 1, boxH - 1);
 
       ctx.fillStyle = "#E8590C";
@@ -201,7 +247,7 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
 
       ctx.fillStyle = "#F6F7F4";
       ctx.font = "600 16px system-ui, -apple-system, sans-serif";
-      drawWrappedText(ctx, q.text, vp.width / 2, boxY + 52, boxW - 28, 20);
+      drawWrappedText(ctx, q.text, vp.width / 2, boxY + 52, boxW - 28, 20, 3);
     }
 
     ctx.restore();
@@ -210,36 +256,14 @@ export class InterviewChallenge implements Challenge<FaceSignal> {
   getResult(): ChallengeResult {
     const total = Math.max(1, this.questions.length);
     const progress = this.status === "passed" ? 1 : Math.min(0.99, this.answeredCount / total);
+    const res: ChallengeResult = { status: this.status, progress, milestones: this.answeredCount };
     if (this.callout !== undefined) {
-      return { status: this.status, progress, callout: this.callout };
+      res.callout = this.callout;
     }
-    return { status: this.status, progress };
+    return res;
   }
 }
 
-function drawWrappedText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  cx: number,
-  cy: number,
-  maxWidth: number,
-  lineHeight: number,
-): void {
-  const words = text.split(" ");
-  const lines: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    const probe = cur ? `${cur} ${w}` : w;
-    if (ctx.measureText(probe).width > maxWidth && cur) {
-      lines.push(cur);
-      cur = w;
-    } else {
-      cur = probe;
-    }
-  }
-  if (cur) lines.push(cur);
-  const startY = cy - ((lines.length - 1) * lineHeight) / 2;
-  for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i]!, cx, startY + i * lineHeight);
-  }
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
 }
