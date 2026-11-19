@@ -27,6 +27,15 @@ export const STAMPS_CALM = [
   "CLEARED: UNNATURAL NEUTRALITY",
 ] as const;
 
+export const STREAK_RANKS = [
+  { minStreak: 30, title: "Permanent Desk Fixture" },
+  { minStreak: 14, title: "Senior Biological Asset" },
+  { minStreak: 7, title: "Verified Mammal" },
+  { minStreak: 3, title: "Standard Human" },
+  { minStreak: 1, title: "Provisional Human" },
+  { minStreak: 0, title: "Applicant" },
+] as const;
+
 export const STALLING_LINES = [
   "Locating chin.",
   "Verifying mammal status.",

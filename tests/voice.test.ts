@@ -3,7 +3,14 @@ import { AFFECT_DEMO_COPY } from "../src/copy/affect-demo";
 import { BOT_DODGE_COPY } from "../src/copy/bot-dodge";
 import { EYES_ON_FORM_COPY } from "../src/copy/eyes-on-form";
 import { FULL_AUDIT_COPY } from "../src/copy/full-audit";
-import { STALLING_LINES, STAMPS_CALM, STAMPS_PASS, STAMPS_REJECT, UI_COPY } from "../src/copy/global";
+import {
+  STALLING_LINES,
+  STAMPS_CALM,
+  STAMPS_PASS,
+  STAMPS_REJECT,
+  STREAK_RANKS,
+  UI_COPY,
+} from "../src/copy/global";
 import { INTERVIEW_COPY } from "../src/copy/interview";
 import { MOUTH_CATCH_COPY } from "../src/copy/mouth-catch";
 import { NOSE_CURSOR_COPY } from "../src/copy/nose-cursor";
@@ -22,6 +29,7 @@ function gatherAllStrings(): string[] {
     ...STAMPS_REJECT,
     ...STAMPS_PASS,
     ...STAMPS_CALM,
+    ...STREAK_RANKS.map((r) => r.title),
     ...STALLING_LINES,
     UI_COPY.agency,
     UI_COPY.formCode,

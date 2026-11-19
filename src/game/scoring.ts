@@ -1,4 +1,5 @@
 import { getSiteDisplay } from "../config";
+import { STREAK_RANKS } from "../copy/global";
 import type { ChallengeResult, TryRecord } from "./types";
 
 /**
@@ -56,4 +57,17 @@ export function pickBestTry(tries: readonly TryRecord[]): TryRecord | null {
     }
   }
   return best;
+}
+
+/**
+ * Maps a daily compliance streak to a local bureaucratic rank title.
+ */
+export function getStreakRank(streak: number): string {
+  const safe = Number.isFinite(streak) ? Math.max(0, Math.floor(streak)) : 0;
+  for (const tier of STREAK_RANKS) {
+    if (safe >= tier.minStreak) {
+      return tier.title;
+    }
+  }
+  return "Applicant";
 }

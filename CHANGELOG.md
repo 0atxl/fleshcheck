@@ -43,6 +43,12 @@
 - Added aspect-ratio clipping (`height: 100%; overflow: clip`) and reduced-motion rules for `::view-transition-*` in `src/ui/styles.css`.
 - Added unit tests in `tests/transitions.test.ts`.
 
+### B6. Optional polish: local streak rank titles
+- Added `STREAK_RANKS` (`Applicant`, `Provisional Human`, `Standard Human`, `Verified Mammal`, `Senior Biological Asset`, `Permanent Desk Fixture`) in `src/copy/global.ts` and pure `getStreakRank()` in `src/game/scoring.ts`.
+- Persisted rank locally in `CaseFileStore` and surfaced it in the intro meta row, personnel case file dialog, and evidence card (`CLASSIFICATION` field).
+- Covered all rank titles in `tests/voice.test.ts` and added rank progression/persistence tests in `tests/scoring.test.ts`.
+
+
 
 
 

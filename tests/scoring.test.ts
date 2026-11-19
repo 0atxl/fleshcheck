@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CaseFileStore, type StorageLike } from "../src/game/case-file";
-import { computeHumanPct, formatShareLine, formatTrySquare } from "../src/game/scoring";
+import { computeHumanPct, formatShareLine, formatTrySquare, getStreakRank } from "../src/game/scoring";
 
 describe("scoring and case-file persistence", () => {
   it("caps failed runs at 99% and keeps scores within [0, 100]", () => {
@@ -138,5 +138,38 @@ describe("scoring and case-file persistence", () => {
       passes: 0,
       bestPct: 0,
     });
+  });
+
+  it("maps streaks to bureaucratic rank titles and persists rank in CaseFileStore", () => {
+    expect(getStreakRank(-3)).toBe("Applicant");
+    expect(getStreakRank(0)).toBe("Applicant");
+    expect(getStreakRank(1)).toBe("Provisional Human");
+    expect(getStreakRank(2)).toBe("Provisional Human");
+    expect(getStreakRank(3)).toBe("Standard Human");
+    expect(getStreakRank(6)).toBe("Standard Human");
+    expect(getStreakRank(7)).toBe("Verified Mammal");
+    expect(getStreakRank(14)).toBe("Senior Biological Asset");
+    expect(getStreakRank(30)).toBe("Permanent Desk Fixture");
+
+    const backing = new Map<string, string>();
+    const storage: StorageLike = {
+      getItem: (k) => backing.get(k) ?? null,
+      setItem: (k, v) => backing.set(k, v),
+    };
+    const store = new CaseFileStore(storage);
+    expect(store.getRankTitle(1)).toBe("Applicant");
+
+    store.recordVerdict("POKER_FACE", 1, { passed: true, pct: 100, paused: false }, false);
+    store.recordVerdict("NOSE_SPOON", 2, { passed: true, pct: 100, paused: false }, false);
+    store.recordVerdict("BOT_DODGE", 3, { passed: true, pct: 100, paused: false }, false);
+
+    expect(store.getRankTitle(3)).toBe("Standard Human");
+    expect(store.getData().rank).toBe("Standard Human");
+
+    // Reloading preserves stored rank and drops back to Applicant if streak goes stale
+    const reloaded = new CaseFileStore(storage);
+    expect(reloaded.getData().rank).toBe("Standard Human");
+    expect(reloaded.getRankTitle(4)).toBe("Standard Human");
+    expect(reloaded.getRankTitle(5)).toBe("Applicant");
   });
 });

@@ -1,5 +1,5 @@
 import { MAX_TRIES_PER_DAY, STORAGE_KEY } from "../config";
-import { pickBestTry } from "./scoring";
+import { getStreakRank, pickBestTry } from "./scoring";
 import type { ChallengeId, TryRecord } from "./types";
 
 export interface DepartmentStats {
@@ -13,6 +13,7 @@ export type LastResultLabel = "cleared" | "rejected" | "absent";
 export interface CaseFileData {
   streak: number;
   lastDay: number;
+  rank?: string;
   lastResult?: LastResultLabel;
   today: {
     day: number;
@@ -121,15 +122,21 @@ export class CaseFileStore {
       const parsed = JSON.parse(raw) as Partial<CaseFileData>;
       const displaySquares = sanitizeTryArray(parsed.today?.displaySquares, MAX_DISPLAY_SQUARES);
       const lastResult = sanitizeLastResult(parsed.lastResult);
+      const streak =
+        typeof parsed.streak === "number" && Number.isFinite(parsed.streak) && parsed.streak >= 0
+          ? Math.floor(parsed.streak)
+          : 0;
+      const rank =
+        typeof parsed.rank === "string" && parsed.rank.trim().length > 0
+          ? parsed.rank.trim()
+          : getStreakRank(streak);
       return {
-        streak:
-          typeof parsed.streak === "number" && Number.isFinite(parsed.streak) && parsed.streak >= 0
-            ? Math.floor(parsed.streak)
-            : 0,
+        streak,
         lastDay:
           typeof parsed.lastDay === "number" && Number.isFinite(parsed.lastDay) && parsed.lastDay >= 0
             ? Math.floor(parsed.lastDay)
             : 0,
+        rank,
         ...(lastResult ? { lastResult } : {}),
         today: {
           day:
@@ -169,6 +176,11 @@ export class CaseFileStore {
     if (streak <= 0 || lastDay <= 0) return 0;
     if (todayDay - lastDay > 1) return 0;
     return streak;
+  }
+
+  /** Returns the subject's current bureaucratic rank title based on live streak. */
+  getRankTitle(todayDay: number): string {
+    return getStreakRank(this.getEffectiveStreak(todayDay));
   }
 
   getTodayTries(dayNumber: number): TryRecord[] {
@@ -288,6 +300,7 @@ export class CaseFileStore {
       } else if (next.lastDay > 0 && dayNumber - next.lastDay > 1 && !record.passed) {
         next.streak = 0;
       }
+      next.rank = getStreakRank(next.streak);
     }
 
     this.save(next);

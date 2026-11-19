@@ -264,13 +264,16 @@ export function bootApp(): void {
         : maxTries === 1
           ? `Annual audit: 1 attempt${squares ? ` (${squares})` : ""}`
           : `Today's tries: ${tries.length}/${maxTries}${squares ? ` (${squares})` : ""}`;
-    metaStreak.textContent = `Streak: ${store.getEffectiveStreak(todayDay)}`;
+    const streak = store.getEffectiveStreak(todayDay);
+    const rank = store.getRankTitle(todayDay);
+    metaStreak.textContent = `Streak: ${streak} · ${rank}`;
   }
 
   function renderCaseFile(): void {
     const streak = store.getEffectiveStreak(todayDay);
+    const rank = store.getRankTitle(todayDay);
     const totalTries = store.getTotalTries();
-    caseStats.textContent = `Streak: ${streak} · Total inspections: ${totalTries}`;
+    caseStats.textContent = `Classification: ${rank} · Streak: ${streak} · Total inspections: ${totalTries}`;
 
     caseGrid.replaceChildren();
     for (const item of ACTIVE_CHALLENGES) {
@@ -669,6 +672,7 @@ export function bootApp(): void {
       seed,
       isReplay,
       snapshot: liveBest ? bestSnapshotCanvas : null,
+      rankTitle: store.getRankTitle(todayDay),
       ...(liveBest?.stampText ? { stampText: liveBest.stampText } : {}),
     });
 

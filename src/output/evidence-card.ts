@@ -23,6 +23,7 @@ export interface EvidenceCardInput {
   isReplay: boolean;
   snapshot: HTMLCanvasElement | null;
   stampText?: string;
+  rankTitle?: string;
 }
 
 const RX = 632;
@@ -200,13 +201,24 @@ function drawForm(ctx: CanvasRenderingContext2D, input: EvidenceCardInput): void
     ctx.fillText("PROBATIONARY", RX + pctW + 14, 402);
   }
 
-  // Attempts
+  // Attempts & Classification rank
   ctx.fillStyle = THEME.formBlue;
   ctx.font = `700 13px ${FONT_LABEL}`;
   ctx.fillText("ATTEMPTS", RX, 486);
   ctx.fillStyle = THEME.ink;
   ctx.font = "26px system-ui, -apple-system, sans-serif";
   ctx.fillText(input.tries.map(formatTrySquare).join(" ") || "-", RX, 518);
+
+  if (input.rankTitle) {
+    const rankX = RX + 250;
+    const rankMaxW = RW - 250;
+    ctx.fillStyle = THEME.formBlue;
+    ctx.font = `700 13px ${FONT_LABEL}`;
+    ctx.fillText("CLASSIFICATION", rankX, 486);
+    ctx.fillStyle = THEME.ink;
+    ctx.font = `700 19px ${FONT_TYPE}`;
+    ctx.fillText(input.rankTitle, rankX, 514, rankMaxW);
+  }
 
   // Fine print
   ctx.fillStyle = THEME.inkMuted;
