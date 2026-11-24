@@ -674,6 +674,10 @@ body[data-view="verdict"] .field-row {
   opacity: 0.55;
 }
 
+.btn[hidden] {
+  display: none;
+}
+
 .btn-quiet {
   border-width: 0 0 1.5px;
   border-radius: 0;

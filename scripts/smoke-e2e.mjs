@@ -242,6 +242,11 @@ async function run() {
       /Next case opens in \d{2}:\d{2}:\d{2} UTC\./.test(countdownText ?? ""),
       `Expected UTC countdown on finished daily verdict, got: ${countdownText}`,
     );
+    const retryDisplay = await page.evaluate(() => {
+      const btn = document.getElementById("retry-try");
+      return btn ? window.getComputedStyle(btn).display : null;
+    });
+    assert(retryDisplay === "none", `Expected #retry-try to be hidden on finished verdict, got display=${retryDisplay}`);
 
     await page.click("#copy-share-btn");
     await page.waitForFunction(() =>

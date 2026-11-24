@@ -575,7 +575,8 @@ export function bootApp(): void {
     const shouldReplaceBest =
       !priorBest ||
       verdict.pct > priorBest.pct ||
-      (verdict.pct === priorBest.pct && verdict.passed && !priorBest.passed);
+      (verdict.pct === priorBest.pct && verdict.passed && !priorBest.passed) ||
+      (verdict.pct === priorBest.pct && verdict.passed === priorBest.passed && bestVerdict === null);
 
     if (shouldReplaceBest) {
       bestVerdict = {

@@ -56,4 +56,5 @@
 - Updated `index.html` with absolute `https://fleshcheck.vercel.app` Open Graph, Twitter Card, and canonical URLs (keeping `LAUNCH_EPOCH_UTC` at `2026-11-18`).
 - Redesigned `public/og-card.png` (1200×630) in the warm archival paper bureaucratic form palette (`THEME`, `Archivo Narrow`, `Courier Prime`, checkbox declaration, OBV seal, and distressed red rubber stamp) following `docs/voice.md`.
 - Added first-party Vercel Web Analytics (`@vercel/analytics`) via `src/lib/analytics.ts` and `src/main.ts`, enabled in production on deployed hosts (uses same-origin `/_vercel/insights/*` under the existing strict CSP; stays silent on local dev/preview/E2E loopback hosts).
+- Fixed `.btn[hidden]` CSS specificity in `src/ui/styles.css` so hidden verdict buttons (`#retry-try`, `#share-native`, `#download-clip`, `#reload-next-case`) actually hide, and ensured post-reload live verdict ties capture the live snapshot in `src/ui/app.ts`; added computed-display assertion in `scripts/smoke-e2e.mjs`.
 - Removed untracked `fleshcheck-codebase.zip` and added `*.zip` to `.gitignore`.
