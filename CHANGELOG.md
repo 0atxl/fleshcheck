@@ -55,4 +55,5 @@
 - Added `"engines": { "node": ">=22.12.0" }` to `package.json` for Vite 8 / Vitest 5 / Vercel Node runtime compatibility.
 - Updated `index.html` with absolute `https://fleshcheck.vercel.app` Open Graph, Twitter Card, and canonical URLs (keeping `LAUNCH_EPOCH_UTC` at `2026-11-18`).
 - Redesigned `public/og-card.png` (1200×630) in the warm archival paper bureaucratic form palette (`THEME`, `Archivo Narrow`, `Courier Prime`, checkbox declaration, OBV seal, and distressed red rubber stamp) following `docs/voice.md`.
+- Added first-party Vercel Web Analytics (`@vercel/analytics`) via `src/lib/analytics.ts` and `src/main.ts`, enabled in production on deployed hosts (uses same-origin `/_vercel/insights/*` under the existing strict CSP; stays silent on local dev/preview/E2E loopback hosts).
 - Removed untracked `fleshcheck-codebase.zip` and added `*.zip` to `.gitignore`.

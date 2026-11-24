@@ -3,6 +3,8 @@ import "@fontsource/courier-prime/latin-700.css";
 import "@fontsource/archivo-narrow/latin-500.css";
 import "@fontsource/archivo-narrow/latin-700.css";
 import "./ui/styles.css";
+import { initAnalytics } from "./lib/analytics";
 import { bootApp } from "./ui/app";
 
+initAnalytics();
 bootApp();
