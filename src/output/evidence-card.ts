@@ -11,6 +11,7 @@ export const CARD_HEIGHT = 675;
 
 export interface EvidenceCardInput {
   dayNumber: number;
+  caseLabel?: string;
   title: string;
   department: string;
   pct: number;
@@ -164,11 +165,13 @@ function drawForm(ctx: CanvasRenderingContext2D, input: EvidenceCardInput): void
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = THEME.formBlue;
   ctx.font = `700 16px ${FONT_LABEL}`;
-  ctx.fillText("OFFICE OF BIOLOGICAL VERIFICATION", RX, 66);
+  ctx.fillText("OFFICE OF BIOLOGICAL VERIFICATION", RX, 66, 968 - RX - 12);
 
+  const titleText = "BIOMETRIC COMPLIANCE RECORD";
+  const titleSize = fitLabelFont(ctx, titleText, 36, 20, RW);
   ctx.fillStyle = THEME.ink;
-  ctx.font = `700 36px ${FONT_LABEL}`;
-  ctx.fillText("BIOMETRIC COMPLIANCE RECORD", RX, 106);
+  ctx.font = `700 ${titleSize}px ${FONT_LABEL}`;
+  ctx.fillText(titleText, RX, 106, RW);
 
   ctx.fillStyle = THEME.formBlue;
   ctx.fillRect(RX, 120, RW, 2);
@@ -177,28 +180,52 @@ function drawForm(ctx: CanvasRenderingContext2D, input: EvidenceCardInput): void
 
   // Fields
   const dayStr = String(input.dayNumber).padStart(2, "0");
-  const caseValue = `#${dayStr}${input.isReplay ? " replay" : ""}`;
+  const caseValue = input.caseLabel ?? `#${dayStr}${input.isReplay ? " replay" : ""}`;
   drawField(ctx, RX, 138, 150, 58, "CASE NO.", caseValue);
   drawField(ctx, RX + 158, 138, RW - 158, 58, "DEPARTMENT", input.department);
   drawField(ctx, RX, 204, RW, 58, "TEST ADMINISTERED", input.title);
   drawField(ctx, RX, 270, RW, 58, "FINDING", input.callout, input.passed ? THEME.stampBlue : THEME.stampRed);
 
-  // Score readout
+  // Score readout (scales proportionally if fallback fonts measure wider than Archivo Narrow)
   const pctColor = input.passed ? THEME.stampBlue : THEME.ink;
+  const pctText = `${input.pct}%`;
+  const scoreGap = 12;
+  let pctSize = 138;
+  let humanSize = 46;
+  let probSize = 20;
+
+  ctx.font = `700 ${pctSize}px ${FONT_LABEL}`;
+  let pctW = measureWidth(ctx, pctText);
+  ctx.font = `700 ${humanSize}px ${FONT_LABEL}`;
+  const rawHumanW = measureWidth(ctx, "HUMAN");
+  let rawProbW = 0;
+  if (input.passed) {
+    ctx.font = `700 ${probSize}px ${FONT_LABEL}`;
+    rawProbW = measureWidth(ctx, "PROBATIONARY") + 2;
+  }
+  const totalScoreW = pctW + scoreGap + Math.max(rawHumanW, rawProbW);
+  if (totalScoreW > RW) {
+    const scale = RW / totalScoreW;
+    pctSize = Math.max(64, Math.floor(pctSize * scale));
+    humanSize = Math.max(24, Math.floor(humanSize * scale));
+    probSize = Math.max(13, Math.floor(probSize * scale));
+    ctx.font = `700 ${pctSize}px ${FONT_LABEL}`;
+    pctW = measureWidth(ctx, pctText);
+  }
+
+  const labelMaxW = Math.max(80, RW - pctW - scoreGap);
   ctx.fillStyle = pctColor;
   ctx.textBaseline = "alphabetic";
-  ctx.font = `700 138px ${FONT_LABEL}`;
-  const pctText = `${input.pct}%`;
-  ctx.fillText(pctText, RX - 4, 452);
-  const pctW = ctx.measureText(pctText).width;
+  ctx.font = `700 ${pctSize}px ${FONT_LABEL}`;
+  ctx.fillText(pctText, RX - 4, 452, RW - 80);
 
   ctx.fillStyle = THEME.ink;
-  ctx.font = `700 46px ${FONT_LABEL}`;
-  ctx.fillText("HUMAN", RX + pctW + 12, 452);
+  ctx.font = `700 ${humanSize}px ${FONT_LABEL}`;
+  ctx.fillText("HUMAN", RX + pctW + scoreGap, 452, labelMaxW);
   if (input.passed) {
     ctx.fillStyle = THEME.stampBlue;
-    ctx.font = `700 20px ${FONT_LABEL}`;
-    ctx.fillText("PROBATIONARY", RX + pctW + 14, 402);
+    ctx.font = `700 ${probSize}px ${FONT_LABEL}`;
+    ctx.fillText("PROBATIONARY", RX + pctW + scoreGap + 2, 452 - Math.round(humanSize * 1.08), labelMaxW);
   }
 
   // Attempts & Classification rank
@@ -207,7 +234,7 @@ function drawForm(ctx: CanvasRenderingContext2D, input: EvidenceCardInput): void
   ctx.fillText("ATTEMPTS", RX, 486);
   ctx.fillStyle = THEME.ink;
   ctx.font = "26px system-ui, -apple-system, sans-serif";
-  ctx.fillText(input.tries.map(formatTrySquare).join(" ") || "-", RX, 518);
+  ctx.fillText(input.tries.map(formatTrySquare).join(" ") || "-", RX, 518, 240);
 
   if (input.rankTitle) {
     const rankX = RX + 250;
@@ -224,9 +251,32 @@ function drawForm(ctx: CanvasRenderingContext2D, input: EvidenceCardInput): void
   ctx.fillStyle = THEME.inkMuted;
   ctx.font = `400 13px ${FONT_TYPE}`;
   ctx.textAlign = "left";
-  ctx.fillText("Processed on this device. No frames were uploaded.", RX, 656);
+  ctx.fillText("Processed on this device. No frames were uploaded.", RX, 656, RW - 140);
   ctx.textAlign = "right";
-  ctx.fillText(getSiteDisplay(), RX + RW, 656);
+  ctx.fillText(getSiteDisplay(), RX + RW, 656, 170);
+}
+
+function measureWidth(ctx: CanvasRenderingContext2D, text: string): number {
+  if (typeof ctx.measureText !== "function") return 0;
+  const w = ctx.measureText(text)?.width;
+  return typeof w === "number" && Number.isFinite(w) ? w : 0;
+}
+
+function fitLabelFont(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  startSize: number,
+  minSize: number,
+  maxWidth: number,
+): number {
+  if (typeof ctx.measureText !== "function") return startSize;
+  let size = startSize;
+  while (size > minSize) {
+    ctx.font = `700 ${size}px ${FONT_LABEL}`;
+    if (measureWidth(ctx, text) <= maxWidth) break;
+    size -= 1;
+  }
+  return size;
 }
 
 function drawField(

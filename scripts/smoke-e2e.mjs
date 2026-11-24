@@ -181,6 +181,13 @@ async function run() {
     const bannerText = await page.locator("#challenge-banner").textContent();
     assert(bannerText?.includes("73% human"), `Expected colleague banner, got: ${bannerText}`);
 
+    // 2b. Verify all 10 challenges are freely selectable from the inspection roster
+    const rosterCount = await page.locator(".roster-list > li > button.roster-btn").count();
+    assert(rosterCount === 10, `Expected 10 roster challenge buttons, got ${rosterCount}`);
+    await page.click('.roster-btn[data-challenge-id="NOSE_SPOON"]');
+    const switchedHeading = await page.locator("#main-heading").textContent();
+    assert(switchedHeading === "Nose Spoon", `Expected Nose Spoon after roster click, got: ${switchedHeading}`);
+
     // 3. Test Case File modal dialog open, content, and backdrop light-dismiss
     await page.click("#open-case-file");
     await page.waitForSelector("#case-file-dialog[open]");
@@ -188,6 +195,14 @@ async function run() {
     assert(folderCount === 10, `Expected 10 case file folders, got ${folderCount}`);
     await page.mouse.click(8, 8); // Click outside dialog backdrop
     await page.waitForFunction(() => !document.getElementById("case-file-dialog")?.hasAttribute("open"));
+
+    // 3b. Verify clicking a folder in Case File closes dialog and switches challenge
+    await page.click("#open-case-file");
+    await page.waitForSelector("#case-file-dialog[open]");
+    await page.click('.folder-card[data-challenge-id="POKER_FACE"]');
+    await page.waitForFunction(() => !document.getElementById("case-file-dialog")?.hasAttribute("open"));
+    const caseSwitchHeading = await page.locator("#main-heading").textContent();
+    assert(caseSwitchHeading === "Poker Face", `Expected Poker Face after Case File click, got: ${caseSwitchHeading}`);
 
     // 4. Test mute toggle
     const initialPressed = await page.getAttribute("#mute-toggle", "aria-pressed");

@@ -6,14 +6,14 @@
     <meta name="theme-color" content="#E8E2D0" />
     <meta
       name="description"
-      content="Daily 12-second on-device webcam compliance check from the Office of Biological Verification. Zero video frames leave your browser."
+      content="12-second on-device webcam compliance checks from the Office of Biological Verification. Ten tests. Zero video frames leave your browser."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://fleshcheck.vercel.app/" />
     <meta property="og:title" content="fleshcheck — Office of Biological Verification" />
     <meta
       property="og:description"
-      content="Daily 12-second biometric compliance check. 100% on-device via WebAssembly. Zero upload."
+      content="Ten 12-second biometric compliance checks. 100% on-device via WebAssembly. Zero upload."
     />
     <meta property="og:image" content="https://fleshcheck.vercel.app/og-card.png" />
     <meta property="og:image:width" content="1200" />
@@ -23,7 +23,7 @@
     <meta name="twitter:title" content="fleshcheck — Office of Biological Verification" />
     <meta
       name="twitter:description"
-      content="Daily 12-second biometric compliance check. 100% on-device. Zero upload."
+      content="Ten 12-second biometric compliance checks. 100% on-device. Zero upload."
     />
     <meta name="twitter:image" content="https://fleshcheck.vercel.app/og-card.png" />
     <link rel="canonical" href="https://fleshcheck.vercel.app/" />
@@ -149,6 +149,7 @@
 
             <div class="action-bar">
               <button type="button" class="btn btn-accent" id="retry-try" hidden>Try again</button>
+              <button type="button" class="btn" id="next-challenge-btn">Next inspection</button>
               <button type="button" class="btn btn-primary" id="share-native" hidden>Share evidence</button>
               <button type="button" class="btn" id="download-png">Save evidence PNG</button>
               <span class="copy">

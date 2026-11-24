@@ -27,6 +27,7 @@ export function formatTrySquare(record: TryRecord): string {
  */
 export function formatShareLine(options: {
   dayNumber: number;
+  caseLabel?: string;
   title: string;
   tries: readonly TryRecord[];
   bestPct: number;
@@ -35,11 +36,17 @@ export function formatShareLine(options: {
 }): string {
   const dayStr = String(options.dayNumber).padStart(2, "0");
   const replayTag = options.isReplay ? " (replay)" : "";
+  const caseToken =
+    options.caseLabel !== undefined
+      ? options.caseLabel
+        ? ` ${options.caseLabel}`
+        : ""
+      : ` #${dayStr}${replayTag}`;
   const squares = options.tries.map(formatTrySquare).join("");
   const site = options.site ?? getSiteDisplay();
   const titleUpper = options.title.toUpperCase();
 
-  return `FLESHCHECK #${dayStr}${replayTag} · ${titleUpper} · ${squares} · ${options.bestPct}% HUMAN\n${site}`;
+  return `FLESHCHECK${caseToken} · ${titleUpper} · ${squares} · ${options.bestPct}% HUMAN\n${site}`;
 }
 
 /**

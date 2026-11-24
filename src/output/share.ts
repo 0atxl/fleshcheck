@@ -1,15 +1,20 @@
+import type { ChallengeId } from "../game/types";
 import { canvasToPngBlob } from "../lib/export-png";
 
 export type NativeShareOutcome = "shared" | "cancelled" | "unsupported" | "failed";
 
-export function buildChallengeLink(dayNumber: number, pct: number): string {
+export function buildChallengeLink(dayNumber: number, pct: number, challengeId?: ChallengeId): string {
   if (typeof window === "undefined") {
-    return `?day=${dayNumber}&vs=${pct}`;
+    return challengeId ? `?challenge=${challengeId}&vs=${pct}` : `?day=${dayNumber}&vs=${pct}`;
   }
   const url = new URL(window.location.href);
   url.search = "";
   url.hash = "";
-  url.searchParams.set("day", String(dayNumber));
+  if (challengeId) {
+    url.searchParams.set("challenge", challengeId);
+  } else {
+    url.searchParams.set("day", String(dayNumber));
+  }
   url.searchParams.set("vs", String(pct));
   return url.toString();
 }

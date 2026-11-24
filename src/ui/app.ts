@@ -29,7 +29,7 @@ import {
 import { requestCamera, stopCamera } from "../vision/camera";
 import { createFaceLandmarker, prefetchFaceAssets } from "../vision/loader";
 import { FaceTracker } from "../vision/tracker";
-import { mountDevSwitcher } from "./dev-switcher";
+import { mountInspectionRoster } from "./roster";
 import {
   hidePanel,
   runSharedElementTransition,
@@ -51,14 +51,17 @@ export function bootApp(): void {
   const dailyPick = selectDailyChallenge(activeDay, getRosterForDay(activeDay));
   let manifest: ChallengeManifest = dailyPick.challenge;
   let seed = dailyPick.seed;
-  let isDevSandbox = false;
+  let isOpenMode = false;
 
-  if (import.meta.env.DEV) {
-    const devParam = new URLSearchParams(window.location.search).get("challenge");
-    const matched = devParam ? ACTIVE_CHALLENGES.find((c) => c.id === devParam) : undefined;
+  const challengeParam = new URLSearchParams(window.location.search).get("challenge")?.trim();
+  if (challengeParam) {
+    const upper = challengeParam.toUpperCase();
+    const matched = ACTIVE_CHALLENGES.find((c) => c.id === upper);
     if (matched) {
       manifest = matched;
-      isDevSandbox = true;
+      const idx = ACTIVE_CHALLENGES.indexOf(matched);
+      seed = (dailyPick.seed ^ Math.imul(idx + 1, 2654435761)) >>> 0;
+      isOpenMode = true;
     }
   }
 
@@ -103,6 +106,7 @@ export function bootApp(): void {
   const shareNativeBtn = mustGet<HTMLButtonElement>("share-native");
   const postXLink = mustGet<HTMLAnchorElement>("post-x-link");
   const retryTryBtn = mustGet<HTMLButtonElement>("retry-try");
+  const nextChallengeBtn = mustGet<HTMLButtonElement>("next-challenge-btn");
   const nextCaseRow = mustGet<HTMLElement>("next-case-row");
   const nextCaseText = mustGet<HTMLElement>("next-case-text");
   const reloadNextCaseBtn = mustGet<HTMLButtonElement>("reload-next-case");
@@ -116,12 +120,20 @@ export function bootApp(): void {
 
   // Initial static copy population (safe textContent only)
   const dayStr = String(activeDay).padStart(2, "0");
+  function getOpenCaseCode(target: ChallengeManifest): string {
+    const idx = Math.max(0, ACTIVE_CHALLENGES.findIndex((c) => c.id === target.id));
+    return `DEPT ${String(idx + 1).padStart(2, "0")}`;
+  }
+
   function syncHeaderCopy(): void {
-    headerCode.textContent = `CASE #${dayStr} · ${UI_COPY.formCode}`;
+    const openCode = getOpenCaseCode(manifest);
+    headerCode.textContent = isOpenMode
+      ? `${openCode} · ${UI_COPY.formCode}`
+      : `CASE #${dayStr} · ${UI_COPY.formCode}`;
     deptKicker.textContent = `${UI_COPY.agency.toUpperCase()} · ${manifest.department.toUpperCase()}`;
     mainHeading.textContent = manifest.title;
     promptEl.textContent = manifest.prompt;
-    fieldCase.textContent = `#${dayStr}${isReplay ? " (replay)" : ""}`;
+    fieldCase.textContent = isOpenMode ? openCode : `#${dayStr}${isReplay ? " (replay)" : ""}`;
     fieldDept.textContent = manifest.department;
     fieldDate.textContent = new Date().toLocaleDateString(undefined, {
       year: "numeric",
@@ -161,14 +173,18 @@ export function bootApp(): void {
   let countdownTimer = 0;
   let sessionToken = 0;
   let panelToken = 0;
+  let verdictRenderToken = 0;
   let inspectionStarting = false;
+  let fontsLoaded = false;
   const nativeShareSupported = isNativeShareAvailable();
   shareNativeBtn.hidden = !nativeShareSupported;
 
   const panels = [panelIntro, panelLoading, panelStage, panelNoFlesh, panelVerdict];
   document.body.dataset.view = "intro";
-  // Canvas text only uses webfonts once loaded; start early so the HUD never falls back.
-  void ensureFonts();
+  // Canvas text only uses webfonts once loaded; start early and re-render verdict card once ready.
+  const fontsReady = ensureFonts().then(() => {
+    fontsLoaded = true;
+  });
 
   interface SwitchPanelOptions {
     morphFrom?: HTMLElement | null;
@@ -243,11 +259,11 @@ export function bootApp(): void {
   }
 
   function currentTries(): TryRecord[] {
-    return isReplay || isDevSandbox ? sandboxTries : store.getTodayTries(activeDay);
+    return isReplay || isOpenMode ? sandboxTries : store.getTodayTries(activeDay);
   }
 
   function currentDisplaySquares(): TryRecord[] {
-    if (isReplay || isDevSandbox) {
+    if (isReplay || isOpenMode) {
       return sandboxDisplaySquares ?? sandboxTries.slice(-MAX_SANDBOX_DISPLAY_TRIES);
     }
     return store.getTodayDisplaySquares(activeDay);
@@ -257,8 +273,8 @@ export function bootApp(): void {
     const tries = currentTries();
     const maxTries = maxTriesForManifest();
     const squares = currentDisplaySquares().map(formatTrySquare).join("");
-    metaTries.textContent = isDevSandbox
-      ? `Dev sandbox tries: ${squares || "None yet"}`
+    metaTries.textContent = isOpenMode
+      ? `Attempts: ${squares || "None yet"}`
       : isReplay
         ? `Replay tries: ${squares || "None yet"}`
         : maxTries === 1
@@ -279,7 +295,12 @@ export function bootApp(): void {
     for (const item of ACTIVE_CHALLENGES) {
       const status = store.getDepartmentStatus(item.id);
       const li = document.createElement("li");
-      li.className = "folder-card";
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "folder-card";
+      btn.dataset.challengeId = item.id;
+      btn.setAttribute("aria-pressed", String(item.id === manifest.id));
 
       const dept = document.createElement("span");
       dept.className = "folder-dept";
@@ -301,7 +322,13 @@ export function bootApp(): void {
           ? UI_COPY.caseFileEmpty
           : `Tries: ${status.tries} · Best: ${status.bestPct}%`;
 
-      li.append(dept, title, stamp, meta);
+      btn.append(dept, title, stamp, meta);
+      btn.addEventListener("click", () => {
+        caseDialog.close();
+        selectChallenge(item);
+      });
+
+      li.append(btn);
       caseGrid.append(li);
     }
   }
@@ -519,7 +546,10 @@ export function bootApp(): void {
         playTypeClack: () => sfx.playTypeClack(),
       },
       reducedMotion,
-      { caseLabel: `CASE #${dayStr}`, copyContext },
+      {
+        caseLabel: isOpenMode ? getOpenCaseCode(manifest) : `CASE #${dayStr}`,
+        copyContext,
+      },
     );
     activeLoop.start();
   }
@@ -539,16 +569,11 @@ export function bootApp(): void {
     // Evaluate against prior stored best BEFORE recording so post-reload tries
     // never overwrite a higher earlier try on the verdict card.
     const priorBest =
-      isReplay || isDevSandbox
+      isReplay || isOpenMode
         ? bestVerdict
         : bestVerdict ?? store.getBestTodayTry(activeDay);
 
-    if (isDevSandbox) {
-      sandboxTries = [...sandboxTries, record];
-      if (roundSquares) {
-        sandboxDisplaySquares = roundSquares;
-      }
-    } else if (isReplay) {
+    if (isReplay || isOpenMode) {
       sandboxTries = [...sandboxTries, record];
       if (roundSquares) {
         sandboxDisplaySquares = roundSquares;
@@ -637,7 +662,7 @@ export function bootApp(): void {
   function showVerdictPanel(moveFocus = false): void {
     const tries = currentTries();
     const displaySquares = currentDisplaySquares();
-    const bestStored = isReplay || isDevSandbox ? bestVerdict : store.getBestTodayTry(activeDay);
+    const bestStored = isReplay || isOpenMode ? bestVerdict : store.getBestTodayTry(activeDay);
 
     const liveBest =
       bestVerdict !== null &&
@@ -660,8 +685,9 @@ export function bootApp(): void {
         ? manifest.durationMs
         : Math.round((bestPct / 100) * manifest.durationMs);
 
-    renderEvidenceCard(evidenceCanvas, {
+    const cardInput = {
       dayNumber: activeDay,
+      ...(isOpenMode ? { caseLabel: getOpenCaseCode(manifest) } : {}),
       title: manifest.title,
       department: manifest.department,
       pct: bestPct,
@@ -675,10 +701,21 @@ export function bootApp(): void {
       snapshot: liveBest ? bestSnapshotCanvas : null,
       rankTitle: store.getRankTitle(todayDay),
       ...(liveBest?.stampText ? { stampText: liveBest.stampText } : {}),
-    });
+    };
+
+    const myRenderToken = ++verdictRenderToken;
+    renderEvidenceCard(evidenceCanvas, cardInput);
+    if (!fontsLoaded) {
+      void fontsReady.then(() => {
+        if (myRenderToken === verdictRenderToken && !panelVerdict.hidden) {
+          renderEvidenceCard(evidenceCanvas, cardInput);
+        }
+      });
+    }
 
     const shareText = formatShareLine({
       dayNumber: activeDay,
+      ...(isOpenMode ? { caseLabel: "" } : {}),
       title: manifest.title,
       tries: displaySquares,
       bestPct,
@@ -687,14 +724,18 @@ export function bootApp(): void {
 
     shareTextEl.textContent = shareText;
     postXLink.href = buildXIntentUrl(shareText);
-    challengeLinkInput.value = buildChallengeLink(activeDay, bestPct);
+    challengeLinkInput.value = buildChallengeLink(
+      activeDay,
+      bestPct,
+      isOpenMode ? manifest.id : undefined,
+    );
 
     const maxTries = maxTriesForManifest();
     const dailyFinished =
-      !isReplay && !isDevSandbox && store.isTodayFinished(activeDay, maxTries);
+      !isReplay && !isOpenMode && store.isTodayFinished(activeDay, maxTries);
     const canRetry =
       isReplay ||
-      isDevSandbox ||
+      isOpenMode ||
       (!dailyFinished && tries.length < maxTries);
     retryTryBtn.hidden = !canRetry;
     shareNativeBtn.hidden = !nativeShareSupported;
@@ -708,6 +749,7 @@ export function bootApp(): void {
     }
 
     updateIntroMeta();
+    roster.update(manifest.id, (id) => store.getDepartmentStatus(id).verdict);
     const focusTarget = moveFocus
       ? canRetry
         ? retryTryBtn
@@ -750,6 +792,22 @@ export function bootApp(): void {
 
   retryTryBtn.addEventListener("click", () => {
     void startInspection();
+  });
+
+  nextChallengeBtn.addEventListener("click", () => {
+    const curIdx = ACTIVE_CHALLENGES.findIndex((c) => c.id === manifest.id);
+    let nextTarget: ChallengeManifest | undefined;
+    for (let offset = 1; offset < ACTIVE_CHALLENGES.length; offset++) {
+      const candidate = ACTIVE_CHALLENGES[(curIdx + offset) % ACTIVE_CHALLENGES.length];
+      if (candidate && store.getDepartmentStatus(candidate.id).verdict !== "CLEARED") {
+        nextTarget = candidate;
+        break;
+      }
+    }
+    nextTarget ??= ACTIVE_CHALLENGES[(curIdx + 1) % ACTIVE_CHALLENGES.length];
+    if (nextTarget) {
+      selectChallenge(nextTarget);
+    }
   });
 
   downloadPngBtn.addEventListener("click", async () => {
@@ -822,39 +880,59 @@ export function bootApp(): void {
     sfx.close();
   });
 
+  function selectChallenge(nextManifest: ChallengeManifest): void {
+    cleanupSession();
+    verdictRenderToken += 1;
+    checkbox.checked = false;
+    setLaunchControlsDisabled(false);
+    manifest = nextManifest;
+    const isUnfinishedDaily =
+      !isReplay &&
+      nextManifest.id === dailyPick.challenge.id &&
+      !store.isTodayFinished(activeDay, nextManifest.maxTries ?? MAX_TRIES_PER_DAY);
+    const idx = Math.max(0, ACTIVE_CHALLENGES.findIndex((c) => c.id === nextManifest.id));
+    isOpenMode = !isUnfinishedDaily;
+    seed = isUnfinishedDaily
+      ? dailyPick.seed
+      : (dailyPick.seed ^ Math.imul(idx + 1, 2654435761)) >>> 0;
+    sandboxTries = [];
+    sandboxDisplaySquares = null;
+    bestVerdict = null;
+    bestClip = null;
+    updateClipButtonUi();
+    if (bestSnapshotCanvas) {
+      bestSnapshotCanvas.width = 0;
+      bestSnapshotCanvas.height = 0;
+      bestSnapshotCanvas = null;
+    }
+    roster.update(nextManifest.id, (id) => store.getDepartmentStatus(id).verdict);
+    syncHeaderCopy();
+    updateIntroMeta();
+    const url = new URL(window.location.href);
+    if (isOpenMode) {
+      url.searchParams.delete("day");
+      url.searchParams.set("challenge", nextManifest.id);
+    } else {
+      url.searchParams.delete("challenge");
+    }
+    window.history.replaceState({}, "", url.toString());
+    void switchPanel(panelIntro, checkbox);
+  }
+
+  const roster = mountInspectionRoster(
+    ACTIVE_CHALLENGES,
+    manifest.id,
+    (id) => store.getDepartmentStatus(id).verdict,
+    (nextManifest) => {
+      selectChallenge(nextManifest);
+    },
+  );
+
   updateMuteUi();
   updateIntroMeta();
 
-  if (import.meta.env.DEV) {
-    const switcher = mountDevSwitcher(ACTIVE_CHALLENGES, manifest.id, (nextManifest) => {
-      cleanupSession();
-      checkbox.checked = false;
-      setLaunchControlsDisabled(false);
-      manifest = nextManifest;
-      seed = dailyPick.seed ^ nextManifest.id.length;
-      isDevSandbox = true;
-      sandboxTries = [];
-      sandboxDisplaySquares = null;
-      bestVerdict = null;
-      bestClip = null;
-      updateClipButtonUi();
-      if (bestSnapshotCanvas) {
-        bestSnapshotCanvas.width = 0;
-        bestSnapshotCanvas.height = 0;
-        bestSnapshotCanvas = null;
-      }
-      switcher.updateActive(nextManifest.id);
-      syncHeaderCopy();
-      updateIntroMeta();
-      const url = new URL(window.location.href);
-      url.searchParams.set("challenge", nextManifest.id);
-      window.history.replaceState({}, "", url.toString());
-      void switchPanel(panelIntro, checkbox);
-    });
-  }
-
   // Returning player who already finished today lands straight on their daily record
-  if (!isReplay && !isDevSandbox && store.isTodayFinished(activeDay, maxTriesForManifest())) {
+  if (!isReplay && !isOpenMode && store.isTodayFinished(activeDay, maxTriesForManifest())) {
     showVerdictPanel(false);
   }
 }
