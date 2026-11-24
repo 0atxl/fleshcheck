@@ -73,7 +73,7 @@ export const POKER_FACE_COPY: CopyBank = {
 /**
  * Case notes the office types about the subject while the round runs.
  * Triggered by small movements well below the fail threshold, so the player
- * feels watched. Sentence case, no exclamation marks (see docs/voice.md).
+ * feels watched. Sentence case, no exclamation marks.
  */
 export const POKER_FACE_NOTES = {
   blink: ["Blink recorded.", "Second blink recorded. Pattern forming.", "Blink noted. Frequency concerning."],
